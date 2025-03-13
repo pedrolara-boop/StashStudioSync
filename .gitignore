@@ -1,0 +1,34 @@
+# Ignore configuration file with real credentials
+config.py
+
+# Ignore log files
+*.log
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore virtual environment
+venv/
+env/
+.env/
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore macOS resource fork files
+._*
+
+# Ignore example folder
+stashPerformerMatchScrape/
+
+# Ignore backup/disabled Python files
+*.py.old 

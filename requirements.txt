@@ -1,0 +1,2 @@
+requests>=2.25.0
+stashapi>=0.5.0 
