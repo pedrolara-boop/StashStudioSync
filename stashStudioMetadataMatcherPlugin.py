@@ -50,6 +50,47 @@ def main():
             # Get the Stash configuration
             stash_config = stash.get_configuration()
             
+            # Debug log the plugins section of the configuration
+            if 'plugins' in stash_config:
+                log.info(f"🔧 Available plugins in configuration: {list(stash_config['plugins'].keys())}")
+            else:
+                log.info("🔧 No plugins section found in configuration")
+            
+            # Get plugin settings
+            plugin_settings = {}
+            
+            # Define the plugin ID - must match the id in the YAML file
+            plugin_id = "stash_studio_metadata_matcher"
+            
+            try:
+                # Try to get plugin settings directly using the StashInterface
+                plugin_settings = stash.find_plugin_config(plugin_id)
+                if plugin_settings:
+                    log.info(f"🔧 Found plugin settings via StashInterface: {plugin_settings}")
+                else:
+                    # Fall back to checking the configuration
+                    if 'plugins' in stash_config and plugin_id in stash_config['plugins']:
+                        plugin_settings = stash_config['plugins'][plugin_id]
+                        log.info(f"🔧 Found plugin settings in Stash configuration: {plugin_settings}")
+                    elif 'plugins' in stash_config and 'StashStudioMetadataMatcher' in stash_config['plugins']:
+                        # Try with the old ID for backward compatibility
+                        plugin_settings = stash_config['plugins']['StashStudioMetadataMatcher']
+                        log.info(f"🔧 Found plugin settings with old ID in Stash configuration: {plugin_settings}")
+                    else:
+                        log.info("🔧 No plugin settings found")
+            except Exception as e:
+                log.error(f"Error getting plugin settings: {e}")
+                # Fall back to checking the configuration
+                if 'plugins' in stash_config and plugin_id in stash_config['plugins']:
+                    plugin_settings = stash_config['plugins'][plugin_id]
+                    log.info(f"🔧 Found plugin settings in Stash configuration: {plugin_settings}")
+                elif 'plugins' in stash_config and 'StashStudioMetadataMatcher' in stash_config['plugins']:
+                    # Try with the old ID for backward compatibility
+                    plugin_settings = stash_config['plugins']['StashStudioMetadataMatcher']
+                    log.info(f"🔧 Found plugin settings with old ID in Stash configuration: {plugin_settings}")
+                else:
+                    log.info("🔧 No plugin settings found")
+            
             # Create our config dictionary
             config = {
                 'scheme': server_connection.get('Scheme', 'http'),
@@ -83,6 +124,19 @@ def main():
             # Get plugin arguments
             dry_run = plugin_args.get('dry_run', False)
             force = plugin_args.get('force', False)
+            
+            # Override with plugin settings if available
+            if plugin_settings and 'dry_run' in plugin_settings:
+                dry_run = plugin_settings['dry_run']
+                log.info(f"🔧 Using dry run setting from plugin configuration: {dry_run}")
+            else:
+                log.info(f"🔧 Using dry run setting from task arguments: {dry_run}")
+            
+            # Make the dry run setting very visible in the logs
+            if dry_run:
+                log.info("🔍 DRY RUN MODE ENABLED - No changes will be made to your database")
+            else:
+                log.info("💾 LIVE MODE - Changes will be applied to your database")
             
             # Get fuzzy matching settings from plugin args if provided
             if 'fuzzy_threshold' in plugin_args:
@@ -132,6 +186,20 @@ def main():
                 func.__globals__['tpdb_rest_api_url'] = TPDB_REST_API_URL
                 func.__globals__['stashdb_api_url'] = STASHDB_API_URL
                 func.__globals__['logger'] = custom_log
+            
+            # Override the update_studio function to add extra logging for dry run mode
+            original_update_studio = update_studio
+            def wrapped_update_studio(studio_data, local_id, dry_run=False):
+                logger(f"🔧 update_studio called with dry_run={dry_run}", "INFO")
+                if dry_run:
+                    logger(f"🔍 DRY RUN: Would update studio {local_id} with data: {studio_data}", "INFO")
+                    return studio_data
+                else:
+                    logger(f"💾 LIVE: Updating studio {local_id}", "INFO")
+                    return original_update_studio(studio_data, local_id, dry_run)
+            
+            # Replace the update_studio function with our wrapped version
+            update_studio.__globals__['update_studio'] = wrapped_update_studio
             
             # Create a wrapper for graphql_request that uses StashInterface for local requests
             original_graphql_request = graphql_request
@@ -200,6 +268,7 @@ def main():
             
             # Process all studios (plugin only supports batch processing)
             logger("🔄 Running update for all studios", "INFO")
+            logger(f"🔧 Parameters: dry_run={dry_run}, force={force}", "INFO")
             update_all_studios(dry_run, force)
             
             logger(f"✅ StashStudioMetadataMatcherPlugin completed", "INFO")

@@ -105,16 +105,17 @@ It can be used either as a Stash plugin or as a standalone Python script.
 Once installed as a plugin, you can use it through the Tasks interface:
 
 **Using the Plugin Tasks**:
+- Go to Settings > Plugins > StashStudioMetadataMatcher
+- You can configure the global "Dry Run" setting in the plugin settings
 - Go to Settings > Plugin Tasks
 - Expand the "StashStudioMetadataMatcher" section
-- You'll see the following available tasks:
-  - **Match All Studios**: Adds missing metadata to studios from ThePornDB and StashDB (IDs, parent studios, URLs, images)
-  - **Match All Studios (Dry Run)**: Shows what changes would be made without actually making them
-  - **Force Update All Studios**: Updates all studios even if they already have complete information
-  - **Force Update All Studios (Dry Run)**: Shows what would be updated in force mode without making changes
-- Click the corresponding "Run" button next to the task you want to execute
+- You'll see two available tasks:
+  - **Match Studios**: Adds missing metadata to studios from ThePornDB and StashDB (IDs, parent studios, URLs, images)
+  - **Force Update Studios**: Updates all studios even if they already have complete information
+- Click the "Run" button next to the task you want to execute
+- The tasks will respect the "Dry Run" setting from the plugin configuration
 
-> **Note**: The plugin uses a high fuzzy threshold (95) by default for more precise matches. This can be adjusted when running the task.
+> **Note**: The plugin uses a high fuzzy threshold (95) by default for more precise matches.
 
 > **Important**: The plugin automatically uses your Stash API keys for ThePornDB and StashDB, so make sure you have set up your Stash Boxes in the Stash settings.
 
