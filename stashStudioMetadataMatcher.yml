@@ -4,7 +4,7 @@ version: 1.2
 url: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
 exec:
   - python
-  - "{pluginDir}/stashStudioMetadataMatcher.py"
+  - "{pluginDir}/stashStudioMetadataMatcherPlugin.py"
 interface: raw
 tasks:
   - name: Match All Studios
@@ -19,7 +19,7 @@ tasks:
       dry_run: true
       fuzzy_threshold: 95  # High threshold for more precise matches
   - name: Force Update All Studios
-    description: Update all studios even if they already have all information
+    description: Update all studios even if they already have complete information
     defaultArgs:
       mode: all
       force: true

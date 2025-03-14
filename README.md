@@ -60,6 +60,8 @@ It can be used either as a Stash plugin or as a standalone Python script.
 
 6. The plugin should now appear in your Stash plugins list
 
+> **Note**: The plugin uses `stashStudioMetadataMatcherPlugin.py` which is optimized for plugin operation with a higher fuzzy threshold (95) by default.
+
 ### As a Standalone Script
 
 1. Clone this repository:
@@ -314,4 +316,19 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-[MIT License](LICENSE) 
+[MIT License](LICENSE)
+
+## Project Structure
+
+The project consists of two main Python files:
+
+1. **stashStudioMetadataMatcher.py**: The main script that can be run from the command line with various arguments.
+
+2. **stashStudioMetadataMatcherPlugin.py**: A simplified version optimized for use as a Stash plugin, which imports functionality from the main script.
+
+This separation allows for:
+- Cleaner code organization
+- Optimized settings for each use case (plugin vs. command-line)
+- Easier maintenance and updates
+
+Both files share the same core functionality but are optimized for their specific use cases. 

@@ -1157,95 +1157,54 @@ def parse_args():
     return parser.parse_args()
 
 def main():
-    # Check if running as a plugin or from command line
-    if len(sys.argv) > 1 and sys.argv[1].startswith('--'):
-        # Running from command line with arguments
-        args = parse_args()
-        
-        # Update config if command line arguments provided
-        if args.host or args.port or args.scheme:
-            # Update the API URL if any connection parameters change
-            if args.host:
-                config['host'] = args.host
-            if args.port:
-                config['port'] = args.port
-            if args.scheme:
-                config['scheme'] = args.scheme
-                
-            # Update the API URL with the new configuration
-            global local_api_url
-            local_api_url = f"{config['scheme']}://{config['host']}:{config['port']}/graphql"
+    # Only handle command line arguments in this version
+    args = parse_args()
+    
+    # Update config if command line arguments provided
+    if args.host or args.port or args.scheme:
+        # Update the API URL if any connection parameters change
+        if args.host:
+            config['host'] = args.host
+        if args.port:
+            config['port'] = args.port
+        if args.scheme:
+            config['scheme'] = args.scheme
             
-        if args.api_key:
-            config['api_key'] = args.api_key
-            
-        # Update fuzzy matching settings if provided
-        if args.fuzzy_threshold:
-            config['fuzzy_threshold'] = args.fuzzy_threshold
-        if args.no_fuzzy:
-            config['use_fuzzy_matching'] = False
+        # Update the API URL with the new configuration
+        global local_api_url
+        local_api_url = f"{config['scheme']}://{config['host']}:{config['port']}/graphql"
         
-        mode_str = " (FORCE)" if args.force else " (DRY RUN)" if args.dry_run else ""
-        fuzzy_str = "" if config['use_fuzzy_matching'] else " (NO FUZZY)"
-        logger(f"🚀 Starting StashStudioMetadataMatcher{mode_str}{fuzzy_str}", "INFO")
+    if args.api_key:
+        config['api_key'] = args.api_key
         
-        if args.id:
-            logger(f"🔍 Running for studio ID: {args.id}", "INFO")
-            update_single_studio(args.id, args.dry_run, args.force)
-        elif args.name:
-            logger(f"🔍 Running for studio name: {args.name}", "INFO")
-            studio = find_studio_by_name(args.name)
-            if studio:
-                update_studio_data(studio, args.dry_run, args.force)
-            else:
-                logger(f"❌ Could not find a unique studio with name: {args.name}", "ERROR")
-        elif args.all:
-            logger("🔄 Running update for all studios", "INFO")
-            update_all_studios(args.dry_run, args.force)
+    # Update fuzzy matching settings if provided
+    if args.fuzzy_threshold:
+        config['fuzzy_threshold'] = args.fuzzy_threshold
+    if args.no_fuzzy:
+        config['use_fuzzy_matching'] = False
+    
+    mode_str = " (FORCE)" if args.force else " (DRY RUN)" if args.dry_run else ""
+    fuzzy_str = "" if config['use_fuzzy_matching'] else " (NO FUZZY)"
+    logger(f"🚀 Starting StashStudioMetadataMatcher{mode_str}{fuzzy_str}", "INFO")
+    
+    if args.id:
+        logger(f"🔍 Running for studio ID: {args.id}", "INFO")
+        update_single_studio(args.id, args.dry_run, args.force)
+    elif args.name:
+        logger(f"🔍 Running for studio name: {args.name}", "INFO")
+        studio = find_studio_by_name(args.name)
+        if studio:
+            update_studio_data(studio, args.dry_run, args.force)
         else:
-            logger("❓ No action specified. Use --all, --id, --name, or --force", "INFO")
-            
-        mode_str = " (FORCE)" if args.force else " (DRY RUN)" if args.dry_run else ""
-        logger(f"✅ StashStudioMetadataMatcher completed{mode_str}", "INFO")
+            logger(f"❌ Could not find a unique studio with name: {args.name}", "ERROR")
+    elif args.all:
+        logger("🔄 Running update for all studios", "INFO")
+        update_all_studios(args.dry_run, args.force)
     else:
-        # Running as a plugin or without arguments
-        logger(f"🚀 Starting StashStudioMetadataMatcher", "INFO")
+        logger("❓ No action specified. Use --all, --id, --name, or --force", "INFO")
         
-        # Check for plugin input from stdin
-        try:
-            if not sys.stdin.isatty():  # Check if stdin has data
-                plugin_input = json.loads(sys.stdin.read())
-                server_connection = plugin_input.get('server_connection', {})
-                plugin_args = plugin_input.get('args', {})
-                mode = plugin_args.get('mode', 'all')
-                dry_run = plugin_args.get('dry_run', False)
-                force = plugin_args.get('force', False)
-                
-                # Get fuzzy matching settings from plugin args if provided
-                if 'fuzzy_threshold' in plugin_args:
-                    config['fuzzy_threshold'] = int(plugin_args['fuzzy_threshold'])
-                if 'use_fuzzy_matching' in plugin_args:
-                    config['use_fuzzy_matching'] = plugin_args['use_fuzzy_matching']
-                
-                mode_str = " (FORCE)" if force else " (DRY RUN)" if dry_run else ""
-                fuzzy_str = "" if config['use_fuzzy_matching'] else " (NO FUZZY)"
-                logger(f"🚀 Starting StashStudioMetadataMatcher{mode_str}{fuzzy_str}", "INFO")
-                
-                # Default to processing all studios
-                logger("🔄 Running update for all studios", "INFO")
-                update_all_studios(dry_run, force)
-            else:
-                # No stdin data, run in batch mode
-                logger("🔄 Running update for all studios", "INFO")
-                update_all_studios(False, False)  # Default to not dry run and not force
-        except json.JSONDecodeError:
-            logger("Failed to decode JSON input, running in batch mode", "INFO")
-            update_all_studios(False, False)  # Default to not dry run and not force
-        except Exception as e:
-            logger(f"Error processing plugin input: {str(e)}", "ERROR")
-            update_all_studios(False, False)  # Default to not dry run and not force
-            
-        logger(f"✅ StashStudioMetadataMatcher completed", "INFO")
+    mode_str = " (FORCE)" if args.force else " (DRY RUN)" if args.dry_run else ""
+    logger(f"✅ StashStudioMetadataMatcher completed{mode_str}", "INFO")
 
 if __name__ == "__main__":
     main() 
