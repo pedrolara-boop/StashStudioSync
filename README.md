@@ -6,14 +6,16 @@ A Python script for matching studios in your [Stash](https://github.com/stashapp
 
 - Automatically matches your local studios with ThePornDB and StashDB
 - Updates studio metadata including:
-  - Parent studios
+  - Parent studios (automatically creates or links parent studios)
   - URLs
   - Images
   - StashDB and ThePornDB IDs
 - Can be run as a Stash plugin or standalone script
 - Supports batch processing or individual studio updates
-- Handles parent/child studio relationships
+- Intelligently handles parent/child studio relationships
 - Optional automatic updates when studios are modified
+- Preserves existing metadata while adding new information
+- Dry run mode to preview changes without applying them
 
 ## Requirements
 
@@ -109,9 +111,14 @@ Limit the number of studios processed:
 python stashStudioMatchScrape.py --all --limit 10
 ```
 
+Preview changes without applying them (dry run):
+```
+python stashStudioMatchScrape.py --all --dry-run
+```
+
 ### As a Stash plugin
 
-Once installed as a plugin, you can use it in two ways:
+Once installed as a plugin, you can use it in several ways:
 
 1. **From the Studio Page**: 
    - Navigate to any studio in Stash
@@ -123,6 +130,7 @@ Once installed as a plugin, you can use it in two ways:
    - Go to Settings > Tasks
    - Find "Match All Studios" in the list
    - Click "Run" to process all studios in your database
+   - Alternatively, use "Match All Studios (Dry Run)" to preview changes without applying them
 
 3. **Automatic Processing (Optional)**:
    - The plugin can automatically run whenever a studio is updated
@@ -135,6 +143,7 @@ Once installed as a plugin, you can use it in two ways:
 The plugin has the following configurable settings:
 
 - **Enable Automatic Updates**: When enabled, the plugin will automatically run whenever a studio is created or updated. This helps keep your studios in sync with external databases without manual intervention.
+- **Dry Run Mode**: When enabled, the plugin will show what changes would be made without actually making them. This is useful for previewing the effects of the plugin before committing changes.
 
 ## Command Line Arguments
 
@@ -147,6 +156,7 @@ The plugin has the following configurable settings:
 - `--api-key API_KEY`: Stash API key (default from config)
 - `--debug`: Enable debug mode with more verbose logging
 - `--limit LIMIT`: Limit the number of studios to process when using --all
+- `--dry-run`: Show what changes would be made without actually making them
 
 ## Getting API Keys
 
@@ -172,6 +182,24 @@ The script works by:
    - Setting the correct parent studio (creating it if necessary)
    - Adding StashDB and ThePornDB IDs
    - Updating the studio URL and image
+
+## Parent Studio Handling
+
+One of the most powerful features of this script is its ability to properly manage parent-child studio relationships:
+
+1. **Automatic Parent Detection**: When a studio is matched on StashDB or ThePornDB, the script checks if it has a parent studio in those databases.
+
+2. **Parent Studio Resolution**: If a parent studio is found, the script:
+   - First checks if the parent already exists in your Stash database (by StashDB/ThePornDB ID)
+   - If not found by ID, it looks for an exact name match in your database
+   - If found by name, it adds the external ID to the existing studio
+   - If not found at all, it creates a new parent studio with the correct name and external ID
+
+3. **Hierarchical Organization**: This ensures your studios are properly organized in the same hierarchy as on StashDB/ThePornDB, making your collection more organized and easier to browse.
+
+4. **Priority Handling**: When both StashDB and ThePornDB have parent information, StashDB is given priority.
+
+This feature is especially useful for large collections where manually setting up studio relationships would be time-consuming.
 
 ## Troubleshooting
 

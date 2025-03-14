@@ -1,24 +1,28 @@
 name: Studio Match Scrape
-description: Match and update studios with ThePornDB and StashDB metadata
+description: Match and update studios with ThePornDB and StashDB metadata, including automatic parent studio creation and linking
 version: 1.0
 url: https://github.com/yourusername/stashStudioMatchScrape
 exec:
-  - python
   - "{pluginDir}/stashStudioMatchScrape.py"
 interface: raw
-settings:
-  enableHooks:
-    displayName: Enable Automatic Updates
-    description: Automatically update studios when they are created or modified
-    type: BOOLEAN
-    default: true
 tasks:
   - name: Match All Studios
-    description: Match and update all studios with ThePornDB and StashDB metadata
+    description: Match and update all studios with ThePornDB and StashDB metadata, including parent-child relationships
     defaultArgs:
       mode: all
-hooks:
-  - trigger: Studio.Update.Post
-    description: Match studio with ThePornDB and StashDB after update
+  - name: Match All Studios (Dry Run)
+    description: Show what changes would be made to studios without actually making them
     defaultArgs:
-      mode: hook 
+      mode: all
+      dry_run: true
+  - name: Force Update All Studios
+    description: Update all studios even if they already have all information
+    defaultArgs:
+      mode: all
+      force: true
+  - name: Force Update All Studios (Dry Run)
+    description: Show what changes would be made to all studios without actually making them
+    defaultArgs:
+      mode: all
+      force: true
+      dry_run: true 
