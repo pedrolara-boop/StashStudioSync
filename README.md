@@ -31,6 +31,33 @@ It can be used either as a Stash plugin or as a standalone Python script.
 
 ## Installation
 
+### As a Stash Plugin
+
+1. Download the script to your Stash plugins directory:
+   ```
+   cd ~/.stash/plugins
+   git clone https://github.com/yourusername/StashStudioMetadataMatcher.git
+   ```
+
+   For information about the plugins directory location for your specific installation, please refer to the [official Stash documentation on adding plugins manually](https://docs.stashapp.cc/in-app-manual/plugins/#adding-plugins-manually).
+
+2. Create your configuration file:
+   ```
+   cd StashStudioMetadataMatcher
+   cp config_template.py config.py
+   ```
+
+3. Edit `config.py` with your API keys as shown above. This step is **crucial** - the script will not work properly without valid API keys.
+
+4. Install the required Python dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+
+5. Reload plugins from the Settings page
+
+6. The plugin should now appear in your Stash plugins list
+
 ### As a Standalone Script
 
 1. Clone this repository:
@@ -62,32 +89,6 @@ It can be used either as a Stash plugin or as a standalone Python script.
    }
    ```
 
-### As a Stash Plugin
-
-1. Download the script to your Stash plugins directory:
-   ```
-   cd ~/.stash/plugins
-   git clone https://github.com/yourusername/StashStudioMetadataMatcher.git
-   ```
-
-   For information about the plugins directory location for your specific installation, please refer to the [official Stash documentation on adding plugins manually](https://docs.stashapp.cc/in-app-manual/plugins/#adding-plugins-manually).
-
-2. Create your configuration file:
-   ```
-   cd StashStudioMetadataMatcher
-   cp config_template.py config.py
-   ```
-
-3. Edit `config.py` with your API keys as shown above. This step is **crucial** - the script will not work properly without valid API keys.
-
-4. Install the required Python dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
-5. Reload plugins from the Settings page
-
-6. The plugin should now appear in your Stash plugins list
 
 ## Usage
 
