@@ -2,12 +2,16 @@
 # Copy this file to config.py and fill in your own values
 config = {
     'scheme': 'http',
-    'host': 'localhost',
-    'port': 9999,
-    'api_key': 'YOUR_STASH_API_KEY_HERE',  # Your Stash API key
-    'tpdb_api_key': 'YOUR_TPDB_API_KEY_HERE',  # Your TPDB API key
-    'stashdb_api_key': 'YOUR_STASHDB_API_KEY_HERE',  # Your stashDB API key
+    'host': 'localhost',  # Your Stash server address
+    'port': 9999,         # Your Stash server port
+    'api_key': '',        # Your Stash API key
+    'tpdb_api_key': '',   # Your ThePornDB API key
+    'stashdb_api_key': '', # Your StashDB API key
     'log_file': 'studio_metadata_matcher.log',  # Log file to track progress
-    'fuzzy_threshold': 85,  # Threshold for fuzzy matching (0-100)
+    'fuzzy_threshold': 85,  # Default threshold for fuzzy matching (0-100)
     'use_fuzzy_matching': True,  # Enable fuzzy matching by default
-} 
+}
+
+# You can copy this file to config.py and update with your own values
+# Alternatively, you can use command line arguments to override these values:
+# python stashStudioMetadataMatcher.py --host your.stash.server --port 9999 --api-key your_api_key 

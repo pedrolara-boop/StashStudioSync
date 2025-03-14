@@ -43,24 +43,17 @@ It can be used either as a Stash plugin or as a standalone Python script.
 
    For information about the plugins directory location for your specific installation, please refer to the [official Stash documentation on adding plugins manually](https://docs.stashapp.cc/in-app-manual/plugins/#adding-plugins-manually).
 
-2. Create your configuration file:
+2. Install the required Python dependencies:
    ```
    cd StashStudioMetadataMatcher
-   cp config_template.py config.py
-   ```
-
-3. Edit `config.py` with your API keys as shown above. This step is **crucial** - the script will not work properly without valid API keys.
-
-4. Install the required Python dependencies:
-   ```
    pip install -r requirements.txt
    ```
 
-5. Reload plugins from the Settings page
+3. Reload plugins from the Settings page
 
-6. The plugin should now appear in your Stash plugins list
+4. The plugin should now appear in your Stash plugins list
 
-> **Note**: The plugin uses `stashStudioMetadataMatcherPlugin.py` which is optimized for plugin operation with a higher fuzzy threshold (95) by default.
+> **Note**: The plugin version automatically uses your Stash API keys for ThePornDB and StashDB, so no configuration file is needed. Just make sure you have set up your Stash Boxes in the Stash settings.
 
 ### As a Standalone Script
 
@@ -121,7 +114,9 @@ Once installed as a plugin, you can use it through the Tasks interface:
   - **Force Update All Studios (Dry Run)**: Shows what would be updated in force mode without making changes
 - Click the corresponding "Run" button next to the task you want to execute
 
-> **Note**: The plugin uses a high fuzzy threshold (95) by default for more precise matches. This can be adjusted in the `config.py` file if needed.
+> **Note**: The plugin uses a high fuzzy threshold (95) by default for more precise matches. This can be adjusted when running the task.
+
+> **Important**: The plugin automatically uses your Stash API keys for ThePornDB and StashDB, so make sure you have set up your Stash Boxes in the Stash settings.
 
 ### As a standalone script
 
@@ -130,12 +125,12 @@ Process all studios:
 python stashStudioMetadataMatcher.py --all
 ```
 
-Process a single studio by ID:
+Process a single studio by ID (script-only feature):
 ```
 python stashStudioMetadataMatcher.py --id 123
 ```
 
-Process a single studio by name:
+Process a single studio by name (script-only feature):
 ```
 python stashStudioMetadataMatcher.py --name "Studio Name"
 ```
@@ -154,7 +149,6 @@ Force update all studios (even if they already have all information):
 ```
 python stashStudioMetadataMatcher.py --all --force
 ```
-
 
 ## Command Line Arguments
 
@@ -322,13 +316,14 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 The project consists of two main Python files:
 
-1. **stashStudioMetadataMatcher.py**: The main script that can be run from the command line with various arguments.
+1. **stashStudioMetadataMatcher.py**: The main script that can be run from the command line with various arguments. Requires a config.py file or environment variables. Supports additional features like matching by ID or name.
 
-2. **stashStudioMetadataMatcherPlugin.py**: A simplified version optimized for use as a Stash plugin, which imports functionality from the main script.
+2. **stashStudioMetadataMatcherPlugin.py**: A specialized version optimized for use as a Stash plugin. Gets configuration directly from Stash, so no config.py file is needed. Focuses on batch processing of all studios.
 
 This separation allows for:
 - Cleaner code organization
 - Optimized settings for each use case (plugin vs. command-line)
 - Easier maintenance and updates
+- Plugin version works without any additional configuration
 
 Both files share the same core functionality but are optimized for their specific use cases. 
