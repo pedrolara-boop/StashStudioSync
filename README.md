@@ -96,12 +96,15 @@ It can be used either as a Stash plugin or as a standalone Python script.
 
 Once installed as a plugin, you can use it through the Tasks interface:
 
-**Batch Processing via Tasks**:
-- Go to Settings > Tasks
-- Find "Match All Studios" in the list
-- Click "Run" to process all studios in your database
-- Alternatively, use "Match All Studios (Dry Run)" to preview changes without applying them
-- Use "Force Update All Studios" to refresh all metadata even for complete studios
+**Using the Plugin Tasks**:
+- Go to Settings > Plugin Tasks
+- Expand the "StashStudioMetadataMatcher" section
+- You'll see four available tasks:
+  - **Match All Studios**: Adds missing metadata to studios from ThePornDB and StashDB (IDs, parent studios, URLs, images)
+  - **Match All Studios (Dry Run)**: Shows what changes would be made without actually making them
+  - **Force Update All Studios**: Updates all studios even if they already have complete information
+  - **Force Update All Studios (Dry Run)**: Shows what would be updated in force mode without making changes
+- Click the corresponding "Run" button next to the task you want to execute
 
 
 ### As a standalone script
@@ -228,22 +231,18 @@ For studios that couldn't be automatically matched:
 2. Check for spelling variations or alternative names
 3. Consider creating custom scrapers for studios that aren't in ThePornDB or StashDB
 
-### Tracking Progress
-
-To help track your progress in completing studio metadata:
-
-1. Use Stash's filtering to find studios without parent studios or external IDs
-2. Create saved filters for incomplete studios to easily revisit them
-3. Consider using tags to mark studios that need manual attention
-
 ## Troubleshooting
 
 - **API Key Issues**: Ensure your API keys are correctly entered in the config.py file
 - **Connection Problems**: Verify your Stash server address and port in the configuration
 - **Log Files**: Check the `studio_metadata_matcher.log` file for detailed error messages
-- **Permission Issues**: Make sure the script has permission to write to the log file
 - **Plugin Not Appearing**: Verify that the plugin directory structure is correct and that the .yml file is properly formatted
-- **Python Path Issues**: If using the plugin in Stash, make sure Python is in your system PATH
+- **Python Environment Issues**: 
+  - Make sure Python 3.6+ is installed and in your system PATH
+  - Verify dependencies are installed with `pip install -r requirements.txt`
+  - Check the Python path in the .yml file matches your Python installation
+  - For Docker installations, you may need to modify the exec path in the .yml file
+  - Consider using a virtual environment if you have multiple Python versions
 
 ### Common Issues and Solutions
 
