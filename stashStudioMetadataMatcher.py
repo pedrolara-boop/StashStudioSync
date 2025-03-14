@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Stash Studio Match Scrape
+StashStudioMetadataMatcher
 
 A Python script for matching studios in your Stash database with ThePornDB and StashDB.
 This tool helps you automatically update your studio metadata with information from these external databases.
 
-GitHub: https://github.com/yourusername/stashStudioMatchScrape
+GitHub: https://github.com/yourusername/StashStudioMetadataMatcher
 License: MIT
 """
 
@@ -61,7 +61,7 @@ except ImportError as e:
         'api_key': '',
         'tpdb_api_key': '',
         'stashdb_api_key': '',
-        'log_file': 'studio_match_progress.log',
+        'log_file': 'studio_metadata_matcher.log',
     }
     print("WARNING: No configuration found. Using default values. Please create a config.py file with your credentials.")
 
@@ -1062,7 +1062,7 @@ def find_studio_by_name(name):
         return None
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Match studios in your Stash database with ThePornDB and StashDB')
+    parser = argparse.ArgumentParser(description='StashStudioMetadataMatcher: Match studios in your Stash database with ThePornDB and StashDB')
     parser.add_argument('--all', action='store_true', help='Process all studios in the database')
     parser.add_argument('--id', type=str, help='Process a single studio with the specified ID')
     parser.add_argument('--name', type=str, help='Process a single studio by name (searches for exact match)')
@@ -1101,7 +1101,7 @@ def main():
             config['api_key'] = args.api_key
         
         mode_str = " (FORCE)" if args.force else " (DRY RUN)" if args.dry_run else ""
-        logger(f"🚀 Starting Stash Studio Match Scrape{mode_str}", "INFO")
+        logger(f"🚀 Starting StashStudioMetadataMatcher{mode_str}", "INFO")
         
         if args.id:
             logger(f"🔍 Running for studio ID: {args.id}", "INFO")
@@ -1120,10 +1120,10 @@ def main():
             logger("❓ No action specified. Use --all, --id, --name, or --force", "INFO")
             
         mode_str = " (FORCE)" if args.force else " (DRY RUN)" if args.dry_run else ""
-        logger(f"✅ Stash Studio Match Scrape completed{mode_str}", "INFO")
+        logger(f"✅ StashStudioMetadataMatcher completed{mode_str}", "INFO")
     else:
         # Running as a plugin or without arguments
-        logger(f"🚀 Starting Stash Studio Match Scrape", "INFO")
+        logger(f"🚀 Starting StashStudioMetadataMatcher", "INFO")
         
         # Check for plugin input from stdin
         try:
@@ -1136,7 +1136,7 @@ def main():
                 force = plugin_args.get('force', False)
                 
                 mode_str = " (FORCE)" if force else " (DRY RUN)" if dry_run else ""
-                logger(f"🚀 Starting Stash Studio Match Scrape{mode_str}", "INFO")
+                logger(f"🚀 Starting StashStudioMetadataMatcher{mode_str}", "INFO")
                 
                 # Default to processing all studios
                 logger("🔄 Running update for all studios", "INFO")
@@ -1152,7 +1152,7 @@ def main():
             logger(f"Error processing plugin input: {str(e)}", "ERROR")
             update_all_studios(False, False)  # Default to not dry run and not force
             
-        logger(f"✅ Stash Studio Match Scrape completed", "INFO")
+        logger(f"✅ StashStudioMetadataMatcher completed", "INFO")
 
 if __name__ == "__main__":
     main() 

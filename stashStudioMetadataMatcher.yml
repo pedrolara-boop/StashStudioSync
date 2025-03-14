@@ -1,9 +1,10 @@
-name: Studio Match Scrape
+name: StashStudioMetadataMatcher
 description: Match and update studios with ThePornDB and StashDB metadata, including automatic parent studio creation and linking
 version: 1.0
-url: https://github.com/yourusername/stashStudioMatchScrape
+url: https://github.com/yourusername/StashStudioMetadataMatcher
 exec:
-  - "{pluginDir}/stashStudioMatchScrape.py"
+  - /home/fazambuja/apps/stashapp/venv/bin/python
+  - "{pluginDir}/stashStudioMetadataMatcher.py"
 interface: raw
 tasks:
   - name: Match All Studios

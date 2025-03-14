@@ -1,6 +1,11 @@
-# Stash Studio Match Scrape
+# StashStudioMetadataMatcher
 
-A Python script for matching studios in your [Stash](https://github.com/stashapp/stash) database with ThePornDB and StashDB. This tool helps you automatically update your studio metadata with information from these external databases.
+A tool for [Stashapp](https://github.com/stashapp/stash) that ensures your studios have complete metadata by:
+- Adding missing ThePornDB and StashDB IDs
+- Setting up proper parent-child studio relationships
+- Updating basic information like URLs and images when missing
+
+It can be used either as a Stash plugin or as a standalone Python script.
 
 ## Features
 
@@ -11,17 +16,18 @@ A Python script for matching studios in your [Stash](https://github.com/stashapp
   - Images
   - StashDB and ThePornDB IDs
 - Can be run as a Stash plugin or standalone script
-- Supports batch processing or individual studio updates
+- Supports batch processing or individual studio updates(script only)
 - Intelligently handles parent/child studio relationships
-- Optional automatic updates when studios are modified
 - Preserves existing metadata while adding new information
+- Comprehensive logging with summary statistics
 - Dry run mode to preview changes without applying them
+- Force update option to refresh all metadata
 
 ## Requirements
 
 - Python 3.6 or higher
 - [Stash](https://github.com/stashapp/stash) instance
-- API keys for Stash, ThePornDB, and StashDB (optional but recommended)
+- API keys for Stash, ThePornDB, and StashDB
 
 ## Installation
 
@@ -29,8 +35,8 @@ A Python script for matching studios in your [Stash](https://github.com/stashapp
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/stashStudioMatchScrape.git
-   cd stashStudioMatchScrape
+   git clone https://github.com/yourusername/StashStudioMetadataMatcher.git
+   cd StashStudioMetadataMatcher
    ```
 
 2. Install the required dependencies:
@@ -52,7 +58,7 @@ A Python script for matching studios in your [Stash](https://github.com/stashapp
        'api_key': 'YOUR_STASH_API_KEY_HERE',
        'tpdb_api_key': 'YOUR_TPDB_API_KEY_HERE',
        'stashdb_api_key': 'YOUR_STASHDB_API_KEY_HERE',
-       'log_file': 'studio_match_progress.log',
+       'log_file': 'studio_metadata_matcher.log',
    }
    ```
 
@@ -61,89 +67,74 @@ A Python script for matching studios in your [Stash](https://github.com/stashapp
 1. Download the script to your Stash plugins directory:
    ```
    cd ~/.stash/plugins
-   git clone https://github.com/yourusername/stashStudioMatchScrape.git
+   git clone https://github.com/yourusername/StashStudioMetadataMatcher.git
    ```
 
-   Note: The plugins directory location may vary depending on your Stash installation:
-   - Linux: `~/.stash/plugins` or `/root/.stash/plugins`
-   - macOS: `~/.stash/plugins`
-   - Windows: `C:\Users\YourUsername\.stash\plugins`
-   - Docker: `/root/.stash/plugins` (inside the container)
+   For information about the plugins directory location for your specific installation, please refer to the [official Stash documentation on adding plugins manually](https://docs.stashapp.cc/in-app-manual/plugins/#adding-plugins-manually).
 
 2. Create your configuration file:
    ```
-   cd stashStudioMatchScrape
+   cd StashStudioMetadataMatcher
    cp config_template.py config.py
    ```
 
-3. Edit `config.py` with your API keys as shown above
+3. Edit `config.py` with your API keys as shown above. This step is **crucial** - the script will not work properly without valid API keys.
 
 4. Install the required Python dependencies:
    ```
    pip install -r requirements.txt
    ```
 
-5. Restart Stash or reload plugins from the Settings page
+5. Reload plugins from the Settings page
 
 6. The plugin should now appear in your Stash plugins list
 
 ## Usage
 
+### As a Stash plugin
+
+Once installed as a plugin, you can use it through the Tasks interface:
+
+**Batch Processing via Tasks**:
+- Go to Settings > Tasks
+- Find "Match All Studios" in the list
+- Click "Run" to process all studios in your database
+- Alternatively, use "Match All Studios (Dry Run)" to preview changes without applying them
+- Use "Force Update All Studios" to refresh all metadata even for complete studios
+
+
 ### As a standalone script
 
 Process all studios:
 ```
-python stashStudioMatchScrape.py --all
+python stashStudioMetadataMatcher.py --all
 ```
 
 Process a single studio by ID:
 ```
-python stashStudioMatchScrape.py --id 123
+python stashStudioMetadataMatcher.py --id 123
 ```
 
 Process a single studio by name:
 ```
-python stashStudioMatchScrape.py --name "Studio Name"
+python stashStudioMetadataMatcher.py --name "Studio Name"
 ```
 
 Limit the number of studios processed:
 ```
-python stashStudioMatchScrape.py --all --limit 10
+python stashStudioMetadataMatcher.py --all --limit 10
 ```
 
 Preview changes without applying them (dry run):
 ```
-python stashStudioMatchScrape.py --all --dry-run
+python stashStudioMetadataMatcher.py --all --dry-run
 ```
 
-### As a Stash plugin
+Force update all studios (even if they already have all information):
+```
+python stashStudioMetadataMatcher.py --all --force
+```
 
-Once installed as a plugin, you can use it in several ways:
-
-1. **From the Studio Page**: 
-   - Navigate to any studio in Stash
-   - Click on the "..." menu
-   - Select "Studio Match Scrape" from the plugins menu
-   - The plugin will attempt to match and update that specific studio
-
-2. **Batch Processing via Tasks**:
-   - Go to Settings > Tasks
-   - Find "Match All Studios" in the list
-   - Click "Run" to process all studios in your database
-   - Alternatively, use "Match All Studios (Dry Run)" to preview changes without applying them
-
-3. **Automatic Processing (Optional)**:
-   - The plugin can automatically run whenever a studio is updated
-   - This feature can be enabled or disabled in the plugin settings
-   - Go to Settings > Plugins > Studio Match Scrape
-   - Toggle the "Enable Automatic Updates" setting
-
-## Plugin Settings
-
-The plugin has the following configurable settings:
-
-- **Enable Automatic Updates**: When enabled, the plugin will automatically run whenever a studio is created or updated. This helps keep your studios in sync with external databases without manual intervention.
-- **Dry Run Mode**: When enabled, the plugin will show what changes would be made without actually making them. This is useful for previewing the effects of the plugin before committing changes.
 
 ## Command Line Arguments
 
@@ -157,20 +148,8 @@ The plugin has the following configurable settings:
 - `--debug`: Enable debug mode with more verbose logging
 - `--limit LIMIT`: Limit the number of studios to process when using --all
 - `--dry-run`: Show what changes would be made without actually making them
+- `--force`: Force update all studios even if they already have all information
 
-## Getting API Keys
-
-### Stash API Key
-1. Go to Settings > Security > API Keys in your Stash instance
-2. Create a new API key with appropriate permissions
-
-### ThePornDB API Key
-1. Register at [ThePornDB](https://theporndb.net/)
-2. Request an API key from your account page
-
-### StashDB API Key
-1. Register at [StashDB](https://stashdb.org/)
-2. Request an API key from your account page
 
 ## How It Works
 
@@ -182,6 +161,8 @@ The script works by:
    - Setting the correct parent studio (creating it if necessary)
    - Adding StashDB and ThePornDB IDs
    - Updating the studio URL and image
+
+> **Important Limitation**: The script relies on exact name matching to find studios on ThePornDB and StashDB. Studios with different names across these platforms (which is rare but does happen) will not be correctly tagged. In such cases, manual tagging may be required.
 
 ## Parent Studio Handling
 
@@ -201,14 +182,84 @@ One of the most powerful features of this script is its ability to properly mana
 
 This feature is especially useful for large collections where manually setting up studio relationships would be time-consuming.
 
+
+### Using the Script's Logging
+
+The script provides detailed logging that helps you understand the state of your studios:
+
+1. **Complete Studios**: Studios that already have ThePornDB IDs, StashDB IDs, and parent studios (if applicable) are marked as "complete" in the logs.
+
+2. **Studios Needing Updates**: The script clearly indicates which studios need updates and what specific information is missing.
+
+3. **Summary Statistics**: At the end of each run, the script provides a summary showing how many studios were updated and how many were already complete.
+
+### Recommended Workflow
+
+For best results, follow this workflow:
+
+1. **Initial Scan**: Run a full scan with dry run mode first to see what changes would be made:
+   ```
+   python stashStudioMetadataMatcher.py --all --dry-run
+   ```
+
+2. **Apply Updates**: Run the script without dry run to apply the changes:
+   ```
+   python stashStudioMetadataMatcher.py --all
+   ```
+
+3. **Regular Maintenance**: Run the script periodically (e.g., weekly) to catch any new studios or updates:
+   ```
+   python stashStudioMetadataMatcher.py --all
+   ```
+
+4. **Force Updates**: Occasionally run with the force option to refresh all metadata:
+   ```
+   python stashStudioMetadataMatcher.py --all --force
+   ```
+
+5. **Check Log Files**: Review the `studio_metadata_matcher.log` file to see which studios were updated and which ones might need manual attention.
+
+### Manual Verification
+
+For studios that couldn't be automatically matched:
+
+1. Use Stash's built-in studio tagger to manually search for matches
+2. Check for spelling variations or alternative names
+3. Consider creating custom scrapers for studios that aren't in ThePornDB or StashDB
+
+### Tracking Progress
+
+To help track your progress in completing studio metadata:
+
+1. Use Stash's filtering to find studios without parent studios or external IDs
+2. Create saved filters for incomplete studios to easily revisit them
+3. Consider using tags to mark studios that need manual attention
+
 ## Troubleshooting
 
 - **API Key Issues**: Ensure your API keys are correctly entered in the config.py file
 - **Connection Problems**: Verify your Stash server address and port in the configuration
-- **Log Files**: Check the `studio_match_progress.log` file for detailed error messages
+- **Log Files**: Check the `studio_metadata_matcher.log` file for detailed error messages
 - **Permission Issues**: Make sure the script has permission to write to the log file
 - **Plugin Not Appearing**: Verify that the plugin directory structure is correct and that the .yml file is properly formatted
 - **Python Path Issues**: If using the plugin in Stash, make sure Python is in your system PATH
+
+### Common Issues and Solutions
+
+1. **Script Hangs or Times Out**:
+   - The script includes timeout protection to prevent hanging
+   - If it still hangs, try running with a smaller batch using the `--limit` option
+   - Check your network connection to ThePornDB and StashDB
+
+2. **No Studios Are Updated**:
+   - Verify your API keys are correct
+   - Check if your studios already have all the necessary information
+   - Try running with the `--force` option to update even complete studios
+
+3. **Incorrect Matches**:
+   - The script only makes exact name matches to avoid errors
+   - For studios with multiple exact matches, no update is made
+   - Consider renaming the studio in your database to match the external source exactly
 
 ## Contributing
 
