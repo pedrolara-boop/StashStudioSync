@@ -1,7 +1,7 @@
 name: StashStudioMetadataMatcher
 description: Match and update studios with ThePornDB and StashDB metadata, including automatic parent studio creation and linking
 version: 1.0
-url: https://github.com/yourusername/StashStudioMetadataMatcher
+url: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
 exec:
   - /home/fazambuja/apps/stashapp/venv/bin/python
   - "{pluginDir}/stashStudioMetadataMatcher.py"

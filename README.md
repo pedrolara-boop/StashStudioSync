@@ -36,7 +36,7 @@ It can be used either as a Stash plugin or as a standalone Python script.
 1. Download the script to your Stash plugins directory:
    ```
    cd ~/.stash/plugins
-   git clone https://github.com/yourusername/StashStudioMetadataMatcher.git
+   git clone https://github.com/pedrolara-boop/StashStudioMetadataMatcher.git
    ```
 
    For information about the plugins directory location for your specific installation, please refer to the [official Stash documentation on adding plugins manually](https://docs.stashapp.cc/in-app-manual/plugins/#adding-plugins-manually).
@@ -62,7 +62,7 @@ It can be used either as a Stash plugin or as a standalone Python script.
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/StashStudioMetadataMatcher.git
+   git clone https://github.com/pedrolara-boop/StashStudioMetadataMatcher.git
    cd StashStudioMetadataMatcher
    ```
 

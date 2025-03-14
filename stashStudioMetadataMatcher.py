@@ -2,10 +2,10 @@
 """
 StashStudioMetadataMatcher
 
-A Python script for matching studios in your Stash database with ThePornDB and StashDB.
-This tool helps you automatically update your studio metadata with information from these external databases.
+A Python script/plugin for matching studios in Stashapp database with ThePornDB and StashDB.
 
-GitHub: https://github.com/yourusername/StashStudioMetadataMatcher
+
+GitHub: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
 License: MIT
 """
 
