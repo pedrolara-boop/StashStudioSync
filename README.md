@@ -14,7 +14,8 @@ It can be used either as a Stash plugin or as a standalone Python script.
   - Parent studios (automatically creates or links parent studios)
   - URLs
   - Images
-  - StashDB and ThePornDB IDs
+  - StashDB and ThePornDB IDs (using UUIDs for ThePornDB)
+- Intelligent fuzzy matching for studios with slightly different names
 - Can be run as a Stash plugin or standalone script
 - Supports batch processing or individual studio updates(script only)
 - Intelligently handles parent/child studio relationships
@@ -22,6 +23,7 @@ It can be used either as a Stash plugin or as a standalone Python script.
 - Comprehensive logging with summary statistics
 - Dry run mode to preview changes without applying them
 - Force update option to refresh all metadata
+- Flexible configuration through environment variables or command line arguments
 
 ## Requirements
 
@@ -86,9 +88,20 @@ It can be used either as a Stash plugin or as a standalone Python script.
        'tpdb_api_key': 'YOUR_TPDB_API_KEY_HERE',
        'stashdb_api_key': 'YOUR_STASHDB_API_KEY_HERE',
        'log_file': 'studio_metadata_matcher.log',
+       'fuzzy_threshold': 95,  # Threshold for fuzzy matching (0-100) - higher for more precise matches
+       'use_fuzzy_matching': True,  # Enable fuzzy matching by default
    }
    ```
 
+   You can also set these values through environment variables:
+   ```bash
+   export STASH_HOST=your.stash.server
+   export STASH_PORT=9999
+   export STASH_SCHEME=http
+   export STASH_API_KEY=your_api_key
+   export TPDB_API_KEY=your_tpdb_key
+   export STASHDB_API_KEY=your_stashdb_key
+   ```
 
 ## Usage
 
@@ -99,13 +112,14 @@ Once installed as a plugin, you can use it through the Tasks interface:
 **Using the Plugin Tasks**:
 - Go to Settings > Plugin Tasks
 - Expand the "StashStudioMetadataMatcher" section
-- You'll see four available tasks:
+- You'll see the following available tasks:
   - **Match All Studios**: Adds missing metadata to studios from ThePornDB and StashDB (IDs, parent studios, URLs, images)
   - **Match All Studios (Dry Run)**: Shows what changes would be made without actually making them
   - **Force Update All Studios**: Updates all studios even if they already have complete information
   - **Force Update All Studios (Dry Run)**: Shows what would be updated in force mode without making changes
 - Click the corresponding "Run" button next to the task you want to execute
 
+> **Note**: The plugin uses a high fuzzy threshold (95) by default for more precise matches. This can be adjusted in the `config.py` file if needed.
 
 ### As a standalone script
 
@@ -145,28 +159,61 @@ python stashStudioMetadataMatcher.py --all --force
 - `--all`: Process all studios in the database
 - `--id ID`: Process a single studio with the specified ID
 - `--name NAME`: Process a single studio by name (searches for exact match)
-- `--host HOST`: Stash host (default from config)
-- `--port PORT`: Stash port (default from config)
-- `--scheme {http,https}`: Stash connection scheme (default from config)
-- `--api-key API_KEY`: Stash API key (default from config)
+- `--host HOST`: Stash host (default from config or environment)
+- `--port PORT`: Stash port (default from config or environment)
+- `--scheme {http,https}`: Stash connection scheme (default from config or environment)
+- `--api-key API_KEY`: Stash API key (default from config or environment)
 - `--debug`: Enable debug mode with more verbose logging
 - `--limit LIMIT`: Limit the number of studios to process when using --all
 - `--dry-run`: Show what changes would be made without actually making them
 - `--force`: Force update all studios even if they already have all information
+- `--fuzzy-threshold THRESHOLD`: Set the threshold for fuzzy matching (0-100, default: 85)
+- `--no-fuzzy`: Disable fuzzy matching
 
+> **Note**: Command line arguments take precedence over environment variables and config file settings.
 
 ## How It Works
 
 The script works by:
 1. Retrieving all studios from your Stash database
 2. For each studio, searching for exact name matches on ThePornDB and StashDB
-3. When a match is found, retrieving detailed information about the studio
-4. Updating your local studio with the new information, including:
+3. If no exact match is found, using fuzzy matching to find similar names (if enabled)
+4. When a match is found, retrieving detailed information about the studio
+5. Updating your local studio with the new information, including:
    - Setting the correct parent studio (creating it if necessary)
-   - Adding StashDB and ThePornDB IDs
+   - Adding StashDB and ThePornDB IDs (using stable UUIDs for ThePornDB)
    - Updating the studio URL and image
 
-> **Important Limitation**: The script relies on exact name matching to find studios on ThePornDB and StashDB. Studios with different names across these platforms (which is rare but does happen) will not be correctly tagged. In such cases, manual tagging may be required.
+> **Important Note**: The script first tries exact name matching to find studios on ThePornDB and StashDB. If no exact match is found, it will use fuzzy matching (if enabled) to find similar names. This helps match studios with slight spelling differences or formatting variations.
+
+> **ThePornDB ID Changes**: The script now uses ThePornDB's stable UUIDs instead of their numeric IDs. This ensures more reliable matching and prevents issues with ID changes. The UUIDs are unique identifiers that remain constant even if ThePornDB's internal numeric IDs change.
+
+## Fuzzy Matching
+
+The script includes intelligent fuzzy matching to help match studios even when names aren't exactly the same:
+
+1. **How It Works**: Fuzzy matching compares studio names and calculates a similarity score (0-100) based on how similar they are.
+
+2. **Threshold Control**: You can control how strict the matching is with the fuzzy threshold:
+   - Higher threshold (e.g., 95): Only very similar names will match (default for plugin mode)
+   - Medium threshold (85): Good balance between precision and recall (default for script mode)
+   - Lower threshold (e.g., 75): More lenient matching, but may include false positives
+
+3. **Examples of What Fuzzy Matching Can Help With**:
+   - Different spacing: "StudioName" vs "Studio Name"
+   - Punctuation differences: "Studio-Name" vs "Studio Name"
+   - Minor spelling variations: "Brazzers" vs "Brazzers."
+   - Word order differences: "Digital Playground" vs "Playground Digital"
+
+4. **Controlling Fuzzy Matching**:
+   - In the config file: Set `use_fuzzy_matching` to `True` or `False` and adjust `fuzzy_threshold`
+   - Command line: Use `--no-fuzzy` to disable or `--fuzzy-threshold 90` to set a custom threshold
+   - Plugin mode: Uses a high threshold (95) by default for more precise matches
+
+5. **When to Adjust Settings**:
+   - If you're getting too many incorrect matches: Increase the threshold or disable fuzzy matching
+   - If you're missing matches you think should work: Lower the threshold
+   - For most users, the default settings work well
 
 ## Parent Studio Handling
 

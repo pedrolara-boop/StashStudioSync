@@ -16,9 +16,10 @@ import time
 import json
 import sys
 import os
-import select
 import argparse
 import importlib.util
+# Import only the fuzz module for token_sort_ratio
+from thefuzz import fuzz
 
 # Get the directory where the script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -62,6 +63,8 @@ except ImportError as e:
         'tpdb_api_key': '',
         'stashdb_api_key': '',
         'log_file': 'studio_metadata_matcher.log',
+        'fuzzy_threshold': 85,  # Default threshold for fuzzy matching (0-100)
+        'use_fuzzy_matching': True,  # Enable fuzzy matching by default
     }
     print("WARNING: No configuration found. Using default values. Please create a config.py file with your credentials.")
 
@@ -323,7 +326,7 @@ def search_tpdb_site(term, api_key):
             results = []
             for site in sites:
                 results.append({
-                    'id': str(site.get('id')),
+                    'id': str(site.get('uuid')),  # Use UUID instead of numeric ID
                     'name': site.get('name')
                 })
             return results
@@ -392,7 +395,7 @@ def find_tpdb_site(site_id, api_key):
                 # Instead of making another API call, use the parent info already in the response
                 if site.get('parent') and site['parent'].get('id') and site['parent'].get('name'):
                     parent = {
-                        'id': str(site['parent'].get('id')),
+                        'id': str(site['parent'].get('uuid')),  # Use UUID instead of numeric ID
                         'name': site['parent'].get('name')
                     }
                 # If parent info is not in the response, only make an API call if absolutely necessary
@@ -404,7 +407,7 @@ def find_tpdb_site(site_id, api_key):
                         if 'data' in parent_data:
                             parent_site = parent_data['data']
                             parent = {
-                                'id': str(parent_site.get('id')),
+                                'id': str(parent_site.get('uuid')),  # Use UUID instead of numeric ID
                                 'name': parent_site.get('name')
                             }
                     except Exception as e:
@@ -418,13 +421,13 @@ def find_tpdb_site(site_id, api_key):
             elif site.get('network') and site.get('network').get('id'):
                 network = site.get('network')
                 parent = {
-                    'id': str(network.get('id')),
+                    'id': str(network.get('uuid')),  # Use UUID instead of numeric ID
                     'name': network.get('name')
                 }
             
             # Build the result in the same format as StashDB
             result = {
-                'id': str(site.get('id')),
+                'id': str(site.get('uuid')),  # Use UUID instead of numeric ID
                 'name': site.get('name'),
                 'urls': [],
                 'parent': parent,
@@ -682,6 +685,41 @@ def update_studio(studio_data, local_id, dry_run=False):
             return response.get('studioUpdate')
         return None
 
+def fuzzy_match_studio_name(name, candidates, threshold=85):
+    """
+    Find the best fuzzy match for a studio name from a list of candidates.
+    
+    Args:
+        name (str): The studio name to match
+        candidates (list): List of candidate studio dictionaries with 'name' key
+        threshold (int): Minimum score (0-100) to consider a match
+        
+    Returns:
+        tuple: (best_match, score) or (None, 0) if no match above threshold
+    """
+    if not name or not candidates:
+        return None, 0
+    
+    best_match = None
+    best_score = 0
+    
+    # Compare each candidate and find the best match
+    for candidate in candidates:
+        candidate_name = candidate['name']
+        # Use token_sort_ratio for better matching of words in different orders
+        score = fuzz.token_sort_ratio(name.lower(), candidate_name.lower())
+        
+        if score > best_score:
+            best_score = score
+            best_match = candidate
+    
+    # Only return matches above the threshold
+    if best_score >= threshold and best_match is not None:
+        logger(f"Fuzzy matched '{name}' to '{best_match['name']}' with score {best_score}", "DEBUG")
+        return best_match, best_score
+    
+    return None, 0
+
 def update_studio_data(studio, dry_run=False, force=False):
     logger(f"🔍 Analyzing studio: '{studio['name']}' (ID: {studio['id']})", "INFO")
 
@@ -722,6 +760,7 @@ def update_studio_data(studio, dry_run=False, force=False):
         try:
             tpdb_results = search_studio(studio['name'], tpdb_api_url, config['tpdb_api_key'])
             if tpdb_results:
+                # First try exact matches
                 exact_matches = [result for result in tpdb_results if result['name'].lower() == studio['name'].lower()]
 
                 if len(exact_matches) == 1:
@@ -730,7 +769,20 @@ def update_studio_data(studio, dry_run=False, force=False):
                 elif len(exact_matches) > 1:
                     logger(f"⚠️ Skipping {studio['name']} - Multiple exact matches found on ThePornDB", "INFO")
                 else:
-                    logger(f"❓ No exact match found on ThePornDB for: {studio['name']}", "DEBUG")
+                    # If no exact match, try fuzzy matching if enabled
+                    if config.get('use_fuzzy_matching', True):
+                        fuzzy_match, score = fuzzy_match_studio_name(
+                            studio['name'], 
+                            tpdb_results, 
+                            config.get('fuzzy_threshold', 85)
+                        )
+                        if fuzzy_match:
+                            tpdb_match = fuzzy_match
+                            logger(f"🎯 Found fuzzy match on ThePornDB: {tpdb_match['name']} (ID: {tpdb_match['id']}, score: {score})", "INFO")
+                        else:
+                            logger(f"❓ No fuzzy match found on ThePornDB for: {studio['name']}", "DEBUG")
+                    else:
+                        logger(f"❓ No exact match found on ThePornDB for: {studio['name']}", "DEBUG")
         except Exception as e:
             logger(f"Error searching ThePornDB: {e}", "ERROR")
             # Continue with StashDB search even if ThePornDB search fails
@@ -740,6 +792,7 @@ def update_studio_data(studio, dry_run=False, force=False):
         try:
             stashdb_results = search_studio(studio['name'], stashdb_api_url, config['stashdb_api_key'])
             if stashdb_results:
+                # First try exact matches
                 exact_matches = [result for result in stashdb_results if result['name'].lower() == studio['name'].lower()]
 
                 if len(exact_matches) == 1:
@@ -748,10 +801,23 @@ def update_studio_data(studio, dry_run=False, force=False):
                 elif len(exact_matches) > 1:
                     logger(f"⚠️ Skipping {studio['name']} - Multiple exact matches found on StashDB", "INFO")
                 else:
-                    logger(f"❓ No exact match found on stashDB for: {studio['name']}", "DEBUG")
+                    # If no exact match, try fuzzy matching if enabled
+                    if config.get('use_fuzzy_matching', True):
+                        fuzzy_match, score = fuzzy_match_studio_name(
+                            studio['name'], 
+                            stashdb_results, 
+                            config.get('fuzzy_threshold', 85)
+                        )
+                        if fuzzy_match:
+                            stashdb_match = fuzzy_match
+                            logger(f"🎯 Found fuzzy match on StashDB: {stashdb_match['name']} (ID: {stashdb_match['id']}, score: {score})", "INFO")
+                        else:
+                            logger(f"❓ No fuzzy match found on StashDB for: {studio['name']}", "DEBUG")
+                    else:
+                        logger(f"❓ No exact match found on stashDB for: {studio['name']}", "DEBUG")
         except Exception as e:
             logger(f"Error searching StashDB: {e}", "ERROR")
-    
+
     # Get studio data from both APIs if we have matches or existing IDs
     tpdb_studio_data = None
     stashdb_studio_data = None
@@ -1043,7 +1109,18 @@ def find_studio_by_name(name):
             logger(f"🎯 Found exact match for studio name: {name} (ID: {studio['id']})", "INFO")
             return studio
     
-    # If no exact match, look for partial matches
+    # If no exact match and fuzzy matching is enabled, try fuzzy matching
+    if config.get('use_fuzzy_matching', True):
+        fuzzy_match, score = fuzzy_match_studio_name(
+            name, 
+            studios, 
+            config.get('fuzzy_threshold', 85)
+        )
+        if fuzzy_match:
+            logger(f"🎯 Found fuzzy match for studio name: {name} → {fuzzy_match['name']} (ID: {fuzzy_match['id']}, score: {score})", "INFO")
+            return fuzzy_match
+    
+    # If no fuzzy match or fuzzy matching is disabled, look for partial matches
     matches = []
     for studio in studios:
         if name.lower() in studio['name'].lower():
@@ -1074,6 +1151,8 @@ def parse_args():
     parser.add_argument('--limit', type=int, help='Limit the number of studios to process when using --all')
     parser.add_argument('--dry-run', action='store_true', help='Show what changes would be made without actually making them')
     parser.add_argument('--force', action='store_true', help='Force update all studios even if they already have all information')
+    parser.add_argument('--fuzzy-threshold', type=int, help='Threshold for fuzzy matching (0-100, default: 85)')
+    parser.add_argument('--no-fuzzy', action='store_true', help='Disable fuzzy matching')
     
     return parser.parse_args()
 
@@ -1099,9 +1178,16 @@ def main():
             
         if args.api_key:
             config['api_key'] = args.api_key
+            
+        # Update fuzzy matching settings if provided
+        if args.fuzzy_threshold:
+            config['fuzzy_threshold'] = args.fuzzy_threshold
+        if args.no_fuzzy:
+            config['use_fuzzy_matching'] = False
         
         mode_str = " (FORCE)" if args.force else " (DRY RUN)" if args.dry_run else ""
-        logger(f"🚀 Starting StashStudioMetadataMatcher{mode_str}", "INFO")
+        fuzzy_str = "" if config['use_fuzzy_matching'] else " (NO FUZZY)"
+        logger(f"🚀 Starting StashStudioMetadataMatcher{mode_str}{fuzzy_str}", "INFO")
         
         if args.id:
             logger(f"🔍 Running for studio ID: {args.id}", "INFO")
@@ -1135,8 +1221,15 @@ def main():
                 dry_run = plugin_args.get('dry_run', False)
                 force = plugin_args.get('force', False)
                 
+                # Get fuzzy matching settings from plugin args if provided
+                if 'fuzzy_threshold' in plugin_args:
+                    config['fuzzy_threshold'] = int(plugin_args['fuzzy_threshold'])
+                if 'use_fuzzy_matching' in plugin_args:
+                    config['use_fuzzy_matching'] = plugin_args['use_fuzzy_matching']
+                
                 mode_str = " (FORCE)" if force else " (DRY RUN)" if dry_run else ""
-                logger(f"🚀 Starting StashStudioMetadataMatcher{mode_str}", "INFO")
+                fuzzy_str = "" if config['use_fuzzy_matching'] else " (NO FUZZY)"
+                logger(f"🚀 Starting StashStudioMetadataMatcher{mode_str}{fuzzy_str}", "INFO")
                 
                 # Default to processing all studios
                 logger("🔄 Running update for all studios", "INFO")

@@ -8,4 +8,6 @@ config = {
     'tpdb_api_key': 'YOUR_TPDB_API_KEY_HERE',  # Your TPDB API key
     'stashdb_api_key': 'YOUR_STASHDB_API_KEY_HERE',  # Your stashDB API key
     'log_file': 'studio_metadata_matcher.log',  # Log file to track progress
+    'fuzzy_threshold': 85,  # Threshold for fuzzy matching (0-100)
+    'use_fuzzy_matching': True,  # Enable fuzzy matching by default
 } 

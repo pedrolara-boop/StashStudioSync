@@ -1,29 +1,33 @@
 name: StashStudioMetadataMatcher
 description: Match and update studios with ThePornDB and StashDB metadata, including automatic parent studio creation and linking
-version: 1.0
+version: 1.2
 url: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
 exec:
-  - /home/fazambuja/apps/stashapp/venv/bin/python
+  - python
   - "{pluginDir}/stashStudioMetadataMatcher.py"
 interface: raw
 tasks:
   - name: Match All Studios
-    description: Match and update all studios with ThePornDB and StashDB metadata, including parent-child relationships
+    description: Match and update all studios with ThePornDB and StashDB metadata, including parent-child relationships (using stable UUIDs for ThePornDB)
     defaultArgs:
       mode: all
+      fuzzy_threshold: 95  # High threshold for more precise matches
   - name: Match All Studios (Dry Run)
     description: Show what changes would be made to studios without actually making them
     defaultArgs:
       mode: all
       dry_run: true
+      fuzzy_threshold: 95  # High threshold for more precise matches
   - name: Force Update All Studios
     description: Update all studios even if they already have all information
     defaultArgs:
       mode: all
       force: true
+      fuzzy_threshold: 95  # High threshold for more precise matches
   - name: Force Update All Studios (Dry Run)
     description: Show what changes would be made to all studios without actually making them
     defaultArgs:
       mode: all
       force: true
-      dry_run: true 
+      dry_run: true
+      fuzzy_threshold: 95  # High threshold for more precise matches
