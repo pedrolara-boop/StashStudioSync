@@ -1,35 +1,42 @@
 name: StashStudioMetadataMatcher
-description: Match and update studios with metadata from all configured Stash-box endpoints (ThePornDB, StashDB, and any additional endpoints). Features include automatic parent studio creation and linking, URL and image updates, and intelligent data merging from multiple sources. No configuration file needed - uses your Stash API keys and endpoint settings.
-version: 1.5
+description: Match and update studios with metadata from all configured Stash-box endpoints (ThePornDB, StashDB, and any additional endpoints). Features include automatic parent studio creation and linking, URL and image updates, and intelligent data merging from multiple sources.
+version: 1.0
 url: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
 exec:
   - python
   - "{pluginDir}/StashStudioMetadataMatcherPlugin.py"
 interface: raw
 tasks:
-  - name: Match Studios
-    description: Match and update studios with metadata from all configured Stash-box endpoints. Automatically creates and links parent studios, updates URLs and images, using data from ThePornDB, StashDB, and any additional configured endpoints.
+  - name: "Match Studios"
+    description: "Match and update studios with metadata from all configured Stash-box endpoints. Automatically creates and links parent studios, updates URLs and images."
     defaultArgs:
+      dry_run: false
+      force: false
       fuzzy_threshold: 95
-  - name: Match Studios (Dry Run)
-    description: Preview changes that would be made to studios without applying them. Shows potential matches and updates from all configured Stash-box endpoints.
+
+  - name: "Match Studios (Dry Run)"
+    description: "Preview changes that would be made to studios without applying them. Shows potential matches and updates from all configured Stash-box endpoints."
     defaultArgs:
       dry_run: true
+      force: false
       fuzzy_threshold: 95
-  - name: Force Update Studios
-    description: Update all studios with the latest metadata from all configured Stash-box endpoints, even if they already have some information.
+
+  - name: "Force Update Studios"
+    description: "Update all studios with the latest metadata from all configured Stash-box endpoints, even if they already have some information."
     defaultArgs:
+      dry_run: false
       force: true
       fuzzy_threshold: 95
-  - name: Force Update Studios (Dry Run)
-    description: Preview all potential updates from configured Stash-box endpoints, including studios that already have some information.
+
+  - name: "Force Update Studios (Dry Run)"
+    description: "Preview all potential updates from configured Stash-box endpoints, including studios that already have some information."
     defaultArgs:
-      force: true
       dry_run: true
-      fuzzy_threshold: 95
-  - name: Force Update Single Studio
-    description: "Update a specific studio with the latest metadata. Requires studio ID as input."
-    defaultArgs:
       force: true
       fuzzy_threshold: 95
-      studio_id: ""
+
+ui:
+  requires:
+    - stashUserscriptLibrary7dJx1qP
+  javascript:
+    - studioMatcherButton.js

@@ -217,22 +217,22 @@ def main():
             local_api_url = f"{config['scheme']}://{config['host']}:{config['port']}/graphql"
             
             # Get plugin arguments
-            dry_run = plugin_args.get('dry_run', False)
-            force = plugin_args.get('force', False)
+            def str_to_bool(value):
+                if isinstance(value, bool):
+                    return value
+                return str(value).lower() in ('true', '1', 'yes', 'on')
+
+            dry_run = str_to_bool(plugin_args.get('dry_run', False))
+            force = str_to_bool(plugin_args.get('force', False))
             studio_id = plugin_args.get('studio_id')  # New argument
             
             # Override with plugin settings if available
             if plugin_settings and 'dry_run' in plugin_settings:
-                dry_run = plugin_settings['dry_run']
-                log.info(f"🔧 Using dry run setting from plugin configuration: {dry_run}")
-            else:
-                log.info(f"🔧 Using dry run setting from task arguments: {dry_run}")
+                dry_run = str_to_bool(plugin_settings['dry_run'])
             
-            # Make the dry run setting very visible in the logs
-            if dry_run:
-                log.info("🔍 DRY RUN MODE ENABLED - No changes will be made to your database")
-            else:
-                log.info("💾 LIVE MODE - Changes will be applied to your database")
+            # Make the mode setting visible in the logs at startup
+            mode_str = " (FORCE)" if force else " (DRY RUN)" if dry_run else ""
+            log.info(f"🚀 Starting StashStudioMetadataMatcherPlugin{mode_str} - Fuzzy threshold: {config['fuzzy_threshold']}")
             
             # Get fuzzy matching settings from plugin args if provided
             if 'fuzzy_threshold' in plugin_args:
@@ -347,8 +347,7 @@ def main():
             original_update_studio_data = update_studio_data
             def wrapped_update_studio_data(studio, dry_run=False, force=False):
                 # Initial processing message
-                prefix = "[DRY RUN] " if dry_run else ""
-                logger(f"🔍 {prefix}Processing studio '{studio['name']}' (ID: {studio['id']})", "INFO")
+                logger(f"🔍 Analyzing studio: '{studio['name']}' (ID: {studio['id']})", "INFO")
             
                 # Check if the studio already has stash IDs
                 existing_stash_ids = {}
@@ -536,33 +535,18 @@ def main():
                     
                     update_summary = ", ".join(updates)
                     if len(studio_update_data) > 1:  # More than just the ID
-                        if dry_run:
-                            logger(f"🔄 Would update: {update_summary}", "INFO")
-                        else:
-                            logger(f"📝 Updating: {update_summary}", "INFO")
-                        
                         try:
                             update_result = update_studio(studio_update_data, studio['id'], dry_run)
                             if update_result:
-                                if dry_run:
-                                    logger(f"✨ No changes made (dry run mode)", "INFO")
-                                else:
+                                if not dry_run:
                                     logger(f"✅ Successfully updated studio '{studio['name']}'", "INFO")
                                 return True
                             else:
-                                if dry_run:
-                                    logger(f"ℹ️ No changes needed (dry run mode)", "INFO")
-                                else:
-                                    logger(f"ℹ️ No changes needed for studio '{studio['name']}'", "INFO")
                                 return False
                         except Exception as e:
                             logger(f"❌ Failed to update studio '{studio['name']}': {e}", "ERROR")
                             return False
                     else:
-                        if dry_run:
-                            logger(f"ℹ️ No changes needed (dry run mode)", "INFO")
-                        else:
-                            logger(f"ℹ️ No changes needed for studio '{studio['name']}'", "INFO")
                         return False
                 else:
                     logger(f"✅ Studio '{studio['name']}' is complete - no updates needed", "INFO")
@@ -662,33 +646,181 @@ def main():
                         update_studio_data]:
                 func.__globals__['graphql_request'] = wrapped_graphql_request
             
-            # Log the start of the process
-            mode_str = " (FORCE)" if force else " (DRY RUN)" if dry_run else ""
-            fuzzy_str = "" if config['use_fuzzy_matching'] else " (NO FUZZY)"
-            logger(f"🚀 Starting StashStudioMetadataMatcherPlugin{mode_str}{fuzzy_str} - Fuzzy threshold: {config['fuzzy_threshold']}", "INFO")
-            
             # Process single studio or all studios
             if studio_id:
-                logger(f"🔍 Running update for single studio ID: {studio_id}", "INFO")
-                logger(f"🔧 Parameters: dry_run={dry_run}, force={force}", "INFO")
+                log.info(f"🔍 Running update for single studio ID: {studio_id}")
                 studio = find_local_studio(studio_id)
                 if studio:
                     update_studio_data(studio, dry_run, force)
                 else:
-                    logger(f"❌ Studio with ID {studio_id} not found.", "ERROR")
+                    log.error(f"❌ Studio with ID {studio_id} not found.")
             else:
                 # Existing batch processing code
-                logger("🔄 Running update for all studios", "INFO")
-                logger(f"🔧 Parameters: dry_run={dry_run}, force={force}", "INFO")
+                log.info("🔄 Running update for all studios")
                 update_all_studios(dry_run, force)
             
-            logger(f"✅ StashStudioMetadataMatcherPlugin completed", "INFO")
+            log.info("✅ StashStudioMetadataMatcherPlugin completed")
         else:
             print("No input received from stdin. This script is meant to be run as a Stash plugin.")
     except json.JSONDecodeError:
         print("Failed to decode JSON input. This script is meant to be run as a Stash plugin.")
     except Exception as e:
         print(f"Error in StashStudioMetadataMatcherPlugin: {str(e)}")
+
+def search_tpdb_site(term, api_key):
+    """Search for a site on ThePornDB using the REST API"""
+    logger(f"Searching for site '{term}' on ThePornDB REST API", "DEBUG")
+    
+    if not api_key:
+        logger("No ThePornDB API key provided, skipping search", "DEBUG")
+        return []
+    
+    url = f"{TPDB_REST_API_URL}/sites"
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Accept': 'application/json'
+    }
+    params = {
+        'q': term,
+        'limit': 100,  # Get more results to improve matching chances
+        'sort': 'name',  # Sort by name for better matching
+        'status': 'active',  # Only get active sites
+        'include': 'parent,network',  # Include parent and network data in response
+        'order': 'desc',  # Most relevant first
+        'date_updated': 'last_month'  # Prioritize recently updated sites
+    }
+    
+    try:
+        # Add timeout to prevent hanging
+        logger(f"Making request to {url} with query: {term}", "DEBUG")
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        
+        # Log the actual URL being called (for debugging)
+        logger(f"Full URL with params: {response.url}", "DEBUG")
+        
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'data' in data:
+            sites = data['data']
+            logger(f"Found {len(sites)} results for '{term}' on ThePornDB REST API", "DEBUG")
+            
+            # Convert to the same format as our GraphQL results
+            results = []
+            for site in sites:
+                # Only include if we have a valid UUID
+                if site.get('uuid'):
+                    # Include parent and network info if available
+                    parent_info = None
+                    if site.get('parent') and site['parent'].get('uuid'):
+                        parent_info = {
+                            'id': str(site['parent']['uuid']),
+                            'name': site['parent'].get('name')
+                        }
+                    elif site.get('network') and site['network'].get('uuid'):
+                        parent_info = {
+                            'id': str(site['network']['uuid']),
+                            'name': site['network'].get('name')
+                        }
+                    
+                    results.append({
+                        'id': str(site.get('uuid')),
+                        'name': site.get('name'),
+                        'parent': parent_info,
+                        'date_updated': site.get('updated_at')
+                    })
+            return results
+        else:
+            logger(f"No 'data' field in ThePornDB response: {data}", "DEBUG")
+            return []
+    except requests.exceptions.RequestException as e:
+        logger(f"ThePornDB REST API request failed: {e}", "ERROR")
+        # Log more details about the error
+        if hasattr(e.response, 'text'):
+            logger(f"Error response: {e.response.text}", "DEBUG")
+        return []
+    except Exception as e:
+        logger(f"Unexpected error in search_tpdb_site: {e}", "ERROR")
+        return []
+
+def find_tpdb_site(site_id, api_key):
+    """Find a site on ThePornDB using the REST API"""
+    logger(f"Finding site with ID {site_id} on ThePornDB REST API", "DEBUG")
+    
+    url = f"{TPDB_REST_API_URL}/sites/{site_id}"
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Accept': 'application/json'
+    }
+    params = {
+        'include': 'parent,network'  # Include parent and network data in response
+    }
+    
+    try:
+        # Add timeout to prevent hanging
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        response_data = response.json()
+        
+        # Log the raw response for debugging
+        logger(f"Raw ThePornDB response: {response_data}", "DEBUG")
+        
+        # The API returns data wrapped in a 'data' object
+        if 'data' in response_data:
+            site = response_data['data']
+            logger(f"Retrieved raw site data from ThePornDB REST API: {site}", "DEBUG")
+            
+            # Convert to the same format as our GraphQL results
+            parent = None
+            # Check for parent or network info in the included data
+            if site.get('parent') and site['parent'].get('uuid'):
+                parent = {
+                    'id': str(site['parent']['uuid']),
+                    'name': site['parent'].get('name')
+                }
+            elif site.get('network') and site['network'].get('uuid'):
+                parent = {
+                    'id': str(site['network']['uuid']),
+                    'name': site['network'].get('name')
+                }
+            
+            # Build the result in the same format as StashDB
+            result = {
+                'id': str(site.get('uuid')),
+                'name': site.get('name'),
+                'urls': [],
+                'parent': parent,
+                'images': [],
+                'date_updated': site.get('updated_at')
+            }
+            
+            # Add URL if available
+            if site.get('url'):
+                result['urls'].append({
+                    'url': site.get('url'),
+                    'type': 'HOME'
+                })
+            
+            # Add images in priority order
+            for image_field in ['poster', 'logo', 'image', 'background']:
+                if site.get(image_field):
+                    result['images'].append({
+                        'url': site.get(image_field)
+                    })
+            
+            logger(f"Processed site data from ThePornDB REST API: {result}", "DEBUG")
+            return result
+        
+        logger(f"No data found in ThePornDB REST API response for site ID {site_id}", "ERROR")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger(f"ThePornDB REST API request failed: {e}", "ERROR")
+        if hasattr(e, 'response') and hasattr(e.response, 'text'):
+            logger(f"Error response: {e.response.text}", "DEBUG")
+        return None
+    except Exception as e:
+        logger(f"Unexpected error in find_tpdb_site: {e}", "ERROR")
+        return None
 
 if __name__ == "__main__":
     main() 
