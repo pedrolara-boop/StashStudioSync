@@ -14,4 +14,4 @@ config = {
 
 # You can copy this file to config.py and update with your own values
 # Alternatively, you can use command line arguments to override these values:
-# python stashStudioMetadataMatcher.py --host your.stash.server --port 9999 --api-key your_api_key 
+# python StashStudioMetadataMatcher.py --host your.stash.server --port 9999 --api-key your_api_key 

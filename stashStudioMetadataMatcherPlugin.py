@@ -20,8 +20,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 # Import core functionality from the main script
-# We'll only import the functions we need, not the config
-from stashStudioMetadataMatcher import (
+from StashStudioMetadataMatcher import (
     logger, update_all_studios, update_single_studio, find_studio_by_name,
     fuzzy_match_studio_name, graphql_request, find_local_studio, get_all_studios,
     search_studio, search_tpdb_site, find_studio, find_tpdb_site,
@@ -99,7 +98,7 @@ def main():
     """
     try:
         # Read the JSON input from stdin
-        if not sys.stdin.isatty():  # Check if stdin has data
+        if not sys.stdin.isatty():
             plugin_input = json.loads(sys.stdin.read())
             server_connection = plugin_input.get('server_connection', {})
             plugin_args = plugin_input.get('args', {})
@@ -220,6 +219,7 @@ def main():
             # Get plugin arguments
             dry_run = plugin_args.get('dry_run', False)
             force = plugin_args.get('force', False)
+            studio_id = plugin_args.get('studio_id')  # New argument
             
             # Override with plugin settings if available
             if plugin_settings and 'dry_run' in plugin_settings:
@@ -346,12 +346,12 @@ def main():
             # Override the update_studio_data function to use our new multi-endpoint functions
             original_update_studio_data = update_studio_data
             def wrapped_update_studio_data(studio, dry_run=False, force=False):
-                logger(f"🔍 Analyzing studio: '{studio['name']}' (ID: {studio['id']})", "INFO")
+                # Initial processing message
+                prefix = "[DRY RUN] " if dry_run else ""
+                logger(f"🔍 {prefix}Processing studio '{studio['name']}' (ID: {studio['id']})", "INFO")
             
                 # Check if the studio already has stash IDs
                 existing_stash_ids = {}
-                
-                # Extract existing IDs if present
                 for stash in studio['stash_ids']:
                     existing_stash_ids[stash['endpoint']] = stash['stash_id']
                 
@@ -515,45 +515,54 @@ def main():
                     if 'parent_id' in combined_data:
                         studio_update_data['parent_id'] = combined_data.get('parent_id')
                     
-                    # Only update if we have something to update
+                    # When finding matches, simplify the log message
+                    if exact_matches:
+                        logger(f"🎯 Found match on {match['endpoint_name']}: {match['name']}", "INFO")
+                    elif fuzzy_match:
+                        logger(f"🎯 Found fuzzy match on {match['endpoint_name']}: {match['name']}", "INFO")
+                    
+                    # Build a human-readable summary of updates
+                    updates = []
+                    if 'name' in studio_update_data:
+                        updates.append("name")
+                    if 'url' in studio_update_data:
+                        updates.append("URL")
+                    if 'image' in studio_update_data:
+                        updates.append("image")
+                    if 'stash_ids' in studio_update_data:
+                        updates.append("stash IDs")
+                    if 'parent_id' in studio_update_data and not has_parent:
+                        updates.append("parent studio")
+                    
+                    update_summary = ", ".join(updates)
                     if len(studio_update_data) > 1:  # More than just the ID
-                        logger(f"Prepared studio update data: {studio_update_data}", "DEBUG")
-                        
-                        # Build a human-readable summary of updates
-                        updates = []
-                        if 'name' in studio_update_data:
-                            updates.append("name")
-                        if 'url' in studio_update_data:
-                            updates.append("URL")
-                        if 'image' in studio_update_data:
-                            updates.append("image")
-                        if 'stash_ids' in studio_update_data:
-                            updates.append(f"{len(studio_update_data['stash_ids'])} stash IDs")
-                        if 'parent_id' in studio_update_data and not has_parent:
-                            updates.append("parent studio")
-                            
-                        update_summary = ", ".join(updates)
                         if dry_run:
-                            logger(f"🔄 Studio '{studio['name']}' needs updates: {update_summary}", "INFO")
+                            logger(f"🔄 Would update: {update_summary}", "INFO")
                         else:
-                            logger(f"📝 Updating studio '{studio['name']}' with: {update_summary}", "INFO")
+                            logger(f"📝 Updating: {update_summary}", "INFO")
                         
                         try:
                             update_result = update_studio(studio_update_data, studio['id'], dry_run)
                             if update_result:
                                 if dry_run:
-                                    logger(f"🔄 DRY RUN: Would update studio '{studio['name']}'", "INFO")
+                                    logger(f"✨ No changes made (dry run mode)", "INFO")
                                 else:
                                     logger(f"✅ Successfully updated studio '{studio['name']}'", "INFO")
                                 return True
                             else:
-                                logger(f"No new details added for studio {studio['name']} (ID: {studio['id']}) - already up to date.", "DEBUG")
+                                if dry_run:
+                                    logger(f"ℹ️ No changes needed (dry run mode)", "INFO")
+                                else:
+                                    logger(f"ℹ️ No changes needed for studio '{studio['name']}'", "INFO")
                                 return False
                         except Exception as e:
-                            logger(f"Failed to update studio: {studio['name']} (ID: {studio['id']}): {e}", "ERROR")
+                            logger(f"❌ Failed to update studio '{studio['name']}': {e}", "ERROR")
                             return False
                     else:
-                        logger(f"No new details to update for studio {studio['name']} (ID: {studio['id']})", "DEBUG")
+                        if dry_run:
+                            logger(f"ℹ️ No changes needed (dry run mode)", "INFO")
+                        else:
+                            logger(f"ℹ️ No changes needed for studio '{studio['name']}'", "INFO")
                         return False
                 else:
                     logger(f"✅ Studio '{studio['name']}' is complete - no updates needed", "INFO")
@@ -578,12 +587,16 @@ def main():
             # Override the update_studio function to add extra logging for dry run mode
             original_update_studio = update_studio
             def wrapped_update_studio(studio_data, local_id, dry_run=False):
-                logger(f"🔧 update_studio called with dry_run={dry_run}", "INFO")
+                # Move this to DEBUG level
+                logger(f"🔧 update_studio called with dry_run={dry_run}", "DEBUG")
+                
                 if dry_run:
-                    logger(f"🔍 DRY RUN: Would update studio {local_id} with data: {studio_data}", "INFO")
+                    # Move detailed data to DEBUG level
+                    logger(f"🔍 DRY RUN: Would update studio {local_id} with data: {studio_data}", "DEBUG")
                     return studio_data
                 else:
-                    logger(f"💾 LIVE: Updating studio {local_id}", "INFO")
+                    # Move to DEBUG level
+                    logger(f"💾 Processing update for studio {local_id}", "DEBUG")
                     return original_update_studio(studio_data, local_id, dry_run)
             
             # Replace the update_studio function with our wrapped version
@@ -654,10 +667,20 @@ def main():
             fuzzy_str = "" if config['use_fuzzy_matching'] else " (NO FUZZY)"
             logger(f"🚀 Starting StashStudioMetadataMatcherPlugin{mode_str}{fuzzy_str} - Fuzzy threshold: {config['fuzzy_threshold']}", "INFO")
             
-            # Process all studios (plugin only supports batch processing)
-            logger("🔄 Running update for all studios", "INFO")
-            logger(f"🔧 Parameters: dry_run={dry_run}, force={force}", "INFO")
-            update_all_studios(dry_run, force)
+            # Process single studio or all studios
+            if studio_id:
+                logger(f"🔍 Running update for single studio ID: {studio_id}", "INFO")
+                logger(f"🔧 Parameters: dry_run={dry_run}, force={force}", "INFO")
+                studio = find_local_studio(studio_id)
+                if studio:
+                    update_studio_data(studio, dry_run, force)
+                else:
+                    logger(f"❌ Studio with ID {studio_id} not found.", "ERROR")
+            else:
+                # Existing batch processing code
+                logger("🔄 Running update for all studios", "INFO")
+                logger(f"🔧 Parameters: dry_run={dry_run}, force={force}", "INFO")
+                update_all_studios(dry_run, force)
             
             logger(f"✅ StashStudioMetadataMatcherPlugin completed", "INFO")
         else:

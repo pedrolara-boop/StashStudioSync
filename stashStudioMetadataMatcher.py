@@ -21,13 +21,14 @@ import importlib.util
 # Import only the fuzz module for token_sort_ratio
 from thefuzz import fuzz
 
-# Get the directory where the script is located
-script_dir = os.path.dirname(os.path.abspath(__file__))
+# Add the current directory to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
 
 # Try to import the user's config file, fall back to template if not available
 try:
     # First try to import the user's config
-    config_path = os.path.join(script_dir, 'config.py')
+    config_path = os.path.join(current_dir, 'config.py')
     if os.path.exists(config_path):
         spec = importlib.util.spec_from_file_location("config", config_path)
         if spec is not None and spec.loader is not None:
@@ -39,7 +40,7 @@ try:
             raise ImportError("Could not load config.py")
     else:
         # Fall back to template config
-        template_path = os.path.join(script_dir, 'config_template.py')
+        template_path = os.path.join(current_dir, 'config_template.py')
         if os.path.exists(template_path):
             spec = importlib.util.spec_from_file_location("config_template", template_path)
             if spec is not None and spec.loader is not None:

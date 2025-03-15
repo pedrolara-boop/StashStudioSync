@@ -4,7 +4,7 @@ version: 1.5
 url: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
 exec:
   - python
-  - "{pluginDir}/stashStudioMetadataMatcherPlugin.py"
+  - "{pluginDir}/StashStudioMetadataMatcherPlugin.py"
 interface: raw
 tasks:
   - name: Match Studios
@@ -27,3 +27,9 @@ tasks:
       force: true
       dry_run: true
       fuzzy_threshold: 95
+  - name: Force Update Single Studio
+    description: "Update a specific studio with the latest metadata. Requires studio ID as input."
+    defaultArgs:
+      force: true
+      fuzzy_threshold: 95
+      studio_id: ""
