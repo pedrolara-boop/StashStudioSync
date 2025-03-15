@@ -1,5 +1,5 @@
 name: StashStudioMetadataMatcher
-description: Match and update studios with ThePornDB and StashDB metadata, including automatic parent studio creation and linking. No configuration file needed - uses your Stash API keys.
+description: Match and update studios with metadata from all configured Stash-box endpoints (ThePornDB, StashDB, and any additional endpoints). Features include automatic parent studio creation and linking, URL and image updates, and intelligent data merging from multiple sources. No configuration file needed - uses your Stash API keys and endpoint settings.
 version: 1.5
 url: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
 exec:
@@ -8,21 +8,21 @@ exec:
 interface: raw
 tasks:
   - name: Match Studios
-    description: Match and update studios with ThePornDB and StashDB metadata, including parent-child relationships
+    description: Match and update studios with metadata from all configured Stash-box endpoints. Automatically creates and links parent studios, updates URLs and images, using data from ThePornDB, StashDB, and any additional configured endpoints.
     defaultArgs:
       fuzzy_threshold: 95
   - name: Match Studios (Dry Run)
-    description: Show what changes would be made to studios without actually making them
+    description: Preview changes that would be made to studios without applying them. Shows potential matches and updates from all configured Stash-box endpoints.
     defaultArgs:
       dry_run: true
       fuzzy_threshold: 95
   - name: Force Update Studios
-    description: Update all studios even if they already have complete information
+    description: Update all studios with the latest metadata from all configured Stash-box endpoints, even if they already have some information.
     defaultArgs:
       force: true
       fuzzy_threshold: 95
   - name: Force Update Studios (Dry Run)
-    description: Show what changes would be made to all studios without actually making them
+    description: Preview all potential updates from configured Stash-box endpoints, including studios that already have some information.
     defaultArgs:
       force: true
       dry_run: true
