@@ -1207,5 +1207,50 @@ def main():
     mode_str = " (FORCE)" if args.force else " (DRY RUN)" if args.dry_run else ""
     logger(f"✅ StashStudioMetadataMatcher completed{mode_str}", "INFO")
 
+def is_tpdb_endpoint(endpoint_url):
+    """Determine if an endpoint is a ThePornDB endpoint"""
+    return "theporndb.net" in endpoint_url.lower()
+
+def search_studio_all_endpoints(studio_name, endpoints):
+    results = []
+    
+    # First search all Stash-box endpoints
+    for endpoint in endpoints:
+        if not is_tpdb_endpoint(endpoint['endpoint']):
+            try:
+                # Use GraphQL search for Stash-box endpoints
+                response = graphql_request(search_studio_query_stashdb, 
+                                        {'term': studio_name}, 
+                                        endpoint['endpoint'], 
+                                        endpoint['api_key'])
+                if response and response.get('searchStudio'):
+                    for result in response['searchStudio']:
+                        results.append({
+                            'id': result['id'],
+                            'name': result['name'],
+                            'endpoint': endpoint['endpoint'],
+                            'endpoint_name': endpoint['name']
+                        })
+            except Exception as e:
+                logger(f"Error searching {endpoint['name']}: {e}", "ERROR")
+    
+    # Then search TPDB separately
+    tpdb_endpoint = next((ep for ep in endpoints if is_tpdb_endpoint(ep['endpoint'])), None)
+    if tpdb_endpoint:
+        try:
+            tpdb_results = search_tpdb_site(studio_name, tpdb_endpoint['api_key'])
+            for result in tpdb_results:
+                results.append({
+                    'id': result['id'],
+                    'name': result['name'],
+                    'endpoint': tpdb_endpoint['endpoint'],
+                    'endpoint_name': tpdb_endpoint['name'],
+                    'is_tpdb': True
+                })
+        except Exception as e:
+            logger(f"Error searching TPDB: {e}", "ERROR")
+    
+    return results
+
 if __name__ == "__main__":
     main() 
