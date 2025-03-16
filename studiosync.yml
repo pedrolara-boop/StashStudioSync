@@ -4,7 +4,7 @@ version: 1.0
 url: https://github.com/pedrolara-boop/StudioSync
 exec:
   - python
-  - "{pluginDir}/studiosync.py"
+  - "{pluginDir}/StudioSync.py"
 interface: raw
 tasks:
   - name: "Match Studios"
