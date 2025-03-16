@@ -453,23 +453,19 @@ def search_all_stashboxes(studio_name):
     """Search for a studio across all configured Stash-box endpoints"""
     global config
     results = []
-    
-    logger(f"🔍 Searching for studio: {studio_name!r}", "INFO")
+    matches_by_endpoint = {}  # Track matches by endpoint for organized reporting
     
     for endpoint in config['stashbox_endpoints']:
         try:
             if not endpoint['api_key']:
-                logger(f"⚠️ Skipping {endpoint['name']} - No API key", "INFO")
                 continue
                 
-            logger(f"📌 Searching {endpoint['name']} ({endpoint['endpoint']})", "INFO")
-            
             if endpoint['is_tpdb']:
                 # TPDB uses its own REST API search
                 tpdb_results = search_tpdb_site(studio_name, endpoint['api_key'])
                 if tpdb_results:
                     for result in tpdb_results:
-                        results.append({
+                        match_data = {
                             'id': result['id'],
                             'name': result['name'],
                             'endpoint': endpoint['endpoint'],
@@ -477,11 +473,16 @@ def search_all_stashboxes(studio_name):
                             'api_key': endpoint['api_key'],
                             'is_tpdb': True,
                             'parent': result.get('parent')
-                        })
+                        }
+                        results.append(match_data)
+                        
+                        # Track for reporting
+                        if endpoint['name'] not in matches_by_endpoint:
+                            matches_by_endpoint[endpoint['name']] = []
+                        matches_by_endpoint[endpoint['name']].append(match_data)
             else:
                 # Standard Stash-box GraphQL search for all other endpoints
                 try:
-                    logger(f"Making GraphQL request to {endpoint['endpoint']} for {studio_name!r}", "INFO")
                     response = graphql_request(
                         STASHBOX_SEARCH_STUDIO_QUERY, 
                         {'term': studio_name}, 
@@ -493,7 +494,7 @@ def search_all_stashboxes(studio_name):
                         found_results = response['searchStudio']
                         if found_results:
                             for result in found_results:
-                                results.append({
+                                match_data = {
                                     'id': result['id'],
                                     'name': result['name'],
                                     'endpoint': endpoint['endpoint'],
@@ -501,49 +502,48 @@ def search_all_stashboxes(studio_name):
                                     'api_key': endpoint['api_key'],
                                     'is_tpdb': False,
                                     'parent': result.get('parent')
-                                })
+                                }
+                                results.append(match_data)
+                                
+                                # Track for reporting
+                                if endpoint['name'] not in matches_by_endpoint:
+                                    matches_by_endpoint[endpoint['name']] = []
+                                matches_by_endpoint[endpoint['name']].append(match_data)
                 except Exception as e:
-                    logger(f"GraphQL error for {endpoint['name']}: {str(e)}", "ERROR")
-            
-            # Log results for this endpoint
-            endpoint_results = [r for r in results if r['endpoint'] == endpoint['endpoint']]
-            if endpoint_results:
-                logger(f"✨ Found {len(endpoint_results)} results on {endpoint['name']}", "INFO")
-                for result in endpoint_results:
-                    logger(f"   - {result['name']} (ID: {result['id']})", "INFO")
-            else:
-                logger(f"❌ No results found on {endpoint['name']}", "INFO")
+                    logger(f"❌ {endpoint['name']} error: {str(e)}", "ERROR")
+                    continue
                 
         except Exception as e:
-            logger(f"Error searching {endpoint['name']}: {e}", "ERROR")
+            logger(f"❌ {endpoint['name']} error: {str(e)}", "ERROR")
             continue
     
     # After gathering all results, perform fuzzy matching
     if results:
-        logger(f"🎯 Running fuzzy matching on {len(results)} total results", "INFO")
         best_match, score, all_matches = fuzzy_match_studio_name(studio_name, results)
         
-        # Log matches by endpoint
-        if all_matches:
-            logger("🎯 Matches found from different endpoints:", "INFO")
-            matches_by_endpoint = {}
-            for match in all_matches:
-                endpoint = match['endpoint_name']
-                if endpoint not in matches_by_endpoint:
-                    matches_by_endpoint[endpoint] = []
-                matches_by_endpoint[endpoint].append(match)
-            
-            for endpoint, matches in matches_by_endpoint.items():
-                logger(f"   {endpoint}:", "INFO")
-                for match in matches:
-                    logger(f"      - {match['name']} (ID: {match['id']})", "INFO")
+        # Create a concise summary of matches
+        summary_lines = []
         
+        # Log matches by endpoint with scores
+        for endpoint_name, matches in matches_by_endpoint.items():
+            if matches:
+                summary_lines.append(f"\n{endpoint_name}:")
+                for match in matches:
+                    match_score = fuzz.token_sort_ratio(studio_name.lower(), match['name'].lower())
+                    match_type = "EXACT" if match_score == 100 else "FUZZY"
+                    summary_lines.append(f"- {match['name']} ({match_type} Score: {match_score}%)")
+        
+        # Log the summary
+        if summary_lines:
+            logger(f"🎯 Matches for '{studio_name}':{' '.join(summary_lines)}", "INFO")
+        
+        # Log best match if found
         if best_match:
-            logger(f"✅ Best overall match: {best_match['name']} from {best_match['endpoint_name']} (Score: {score}%)", "INFO")
+            logger(f"✅ Best match: '{best_match['name']}' from {best_match['endpoint_name']} (Score: {score}%)", "INFO")
             
         return all_matches if all_matches else []
     else:
-        logger(f"❌ No matches found across any endpoints for {studio_name!r}", "INFO")
+        logger(f"❌ No matches for '{studio_name}'", "INFO")
         return []
 
 def wrapped_update_studio_data(studio, dry_run=False, force=False):
@@ -551,15 +551,14 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     global config, processed_studios
     
     studio_id = studio.get('id')
+    studio_name = studio['name']
     
     # Check if we've already processed this studio in this session
     if studio_id in processed_studios:
-        logger(f"⚠️ Studio {studio['name']} (ID: {studio_id}) already processed in this session, skipping", "INFO")
+        logger(f"⚠️ Skipping already processed studio: {studio_name}", "DEBUG")
         return
         
     processed_studios.add(studio_id)  # Mark this studio as processed
-    
-    logger(f"🔄 Processing studio: {studio['name']}", "INFO")
     
     # Initialize variables to track all changes
     all_stash_ids = studio.get('stash_ids', []).copy()
@@ -568,15 +567,16 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     best_parent_id = studio.get('parent_id')
     has_changes = False
     seen_urls = set()  # Track seen URLs for deduplication
+    changes_summary = []  # Track what changed and from where
     
     if best_url:
         seen_urls.add(best_url)
 
     # Search for matches across all endpoints
-    matches = search_all_stashboxes(studio['name'])
+    matches = search_all_stashboxes(studio_name)
     
     if not matches:
-        logger(f"❌ No matches found for studio: {studio['name']}", "INFO")
+        logger(f"❌ No matches found for: {studio_name}", "INFO")
         return
     
     # First pass: Process StashDB matches to get priority images
@@ -595,15 +595,15 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                         if logo_image:
                             best_image = logo_image
                             has_changes = True
-                            logger(f"Found StashDB logo image for {studio['name']}", "INFO")
+                            changes_summary.append("StashDB logo image")
                         elif poster_image:
                             best_image = poster_image
                             has_changes = True
-                            logger(f"Found StashDB poster image for {studio['name']}", "INFO")
+                            changes_summary.append("StashDB poster image")
                         elif studio_data['images']:
                             best_image = studio_data['images'][0].get('url')
                             has_changes = True
-                            logger(f"Using first StashDB image for {studio['name']}", "INFO")
+                            changes_summary.append("StashDB image")
                     
                     # Process URLs from StashDB
                     if studio_data.get('urls'):
@@ -614,11 +614,11 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                                     if not best_url or force:
                                         best_url = url
                                         has_changes = True
-                                        logger(f"Using StashDB HOME URL for {studio['name']}: {url}", "INFO")
+                                        changes_summary.append("StashDB URL")
                                     seen_urls.add(url)
                                     break
             except Exception as e:
-                logger(f"❌ Error processing StashDB match: {str(e)}", "ERROR")
+                logger(f"❌ StashDB error for {studio_name}: {str(e)}", "ERROR")
                 continue
     
     # Second pass: Process remaining matches (ThePornDB and other stash boxes)
@@ -651,6 +651,7 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
             all_stash_ids = [sid for sid in all_stash_ids if sid['endpoint'] != endpoint]
             all_stash_ids.append(stash_id)
             has_changes = True
+            changes_summary.append(f"{endpoint_name} ID")
             
             # Update URL if available and not seen before
             if studio_data.get('urls'):
@@ -661,7 +662,7 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                             if not best_url or force:
                                 best_url = url
                                 has_changes = True
-                                logger(f"Using {endpoint_name} HOME URL for {studio['name']}: {url}", "INFO")
+                                changes_summary.append(f"{endpoint_name} URL")
                             seen_urls.add(url)
                             break
 
@@ -673,15 +674,15 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                 if logo_image:
                     best_image = logo_image
                     has_changes = True
-                    logger(f"Using {endpoint_name} logo image for {studio['name']}", "INFO")
+                    changes_summary.append(f"{endpoint_name} logo image")
                 elif poster_image:
                     best_image = poster_image
                     has_changes = True
-                    logger(f"Using {endpoint_name} poster image for {studio['name']}", "INFO")
+                    changes_summary.append(f"{endpoint_name} poster image")
                 elif studio_data['images']:
                     best_image = studio_data['images'][0].get('url')
                     has_changes = True
-                    logger(f"Using first {endpoint_name} image for {studio['name']}", "INFO")
+                    changes_summary.append(f"{endpoint_name} image")
 
             # Process parent studio
             if studio_data.get('parent') and (not best_parent_id or force):
@@ -698,21 +699,21 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                         if parent_studio and isinstance(parent_studio, dict):
                             best_parent_id = parent_studio.get('id')
                             has_changes = True
+                            changes_summary.append(f"Parent from {endpoint_name}")
                     except Exception as e:
-                        logger(f"❌ Error processing parent studio: {str(e)}", "ERROR")
+                        logger(f"❌ Parent studio error for {studio_name}: {str(e)}", "ERROR")
 
         except Exception as e:
-            logger(f"❌ Error processing match from {endpoint_name}: {str(e)}", "ERROR")
+            logger(f"❌ {endpoint_name} error for {studio_name}: {str(e)}", "ERROR")
             continue
 
     # Perform single update with all collected changes
     if has_changes:
         if not dry_run:
-            logger(f"💾 Updating studio {studio['name']} with new data", "INFO")
             try:
                 studio_update = {
                     'id': studio_id,
-                    'name': studio['name'],
+                    'name': studio_name,
                     'url': best_url,
                     'parent_id': best_parent_id,
                     'image': best_image,
@@ -722,26 +723,21 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                 # Remove any None values
                 studio_update = {k: v for k, v in studio_update.items() if v is not None}
                 
-                # Log what's being updated
-                changes = []
-                if all_stash_ids != studio.get('stash_ids'):
-                    changes.append("stash IDs")
-                if best_image != studio.get('image_path'):
-                    changes.append("image")
-                if best_url != studio.get('url'):
-                    changes.append("URL")
-                if best_parent_id != studio.get('parent_id'):
-                    changes.append("parent studio")
-                    
-                logger(f"📝 Updating {', '.join(changes)}", "INFO")
+                # Create a concise summary of changes
+                unique_changes = list(dict.fromkeys(changes_summary))  # Remove duplicates while preserving order
+                summary = f"📝 {studio_name}: Updated {', '.join(unique_changes)}"
+                if force:
+                    summary += " (forced update)"
+                logger(summary, "INFO")
+                
                 update_studio(studio_update, studio_id, dry_run)
-                logger(f"✅ Successfully updated studio {studio['name']}", "INFO")
             except Exception as e:
-                logger(f"❌ Error updating studio: {str(e)}", "ERROR")
+                logger(f"❌ Update failed for {studio_name}: {str(e)}", "ERROR")
         else:
-            logger(f"🔍 [DRY RUN] Would update studio {studio['name']} with new data", "INFO")
+            unique_changes = list(dict.fromkeys(changes_summary))  # Remove duplicates while preserving order
+            logger(f"🔍 [DRY RUN] Would update {studio_name} with: {', '.join(unique_changes)}", "INFO")
     else:
-        logger(f"ℹ️ No changes needed for studio {studio['name']}", "INFO")
+        logger(f"ℹ️ No changes needed for {studio_name}", "DEBUG")
 
 def parse_args():
     """Parse command line arguments"""
