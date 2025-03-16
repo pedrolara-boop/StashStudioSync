@@ -37,4 +37,4 @@ tasks:
 
 ui:
   javascript:
-    - studiosync.js
+    - StudioSync.js
