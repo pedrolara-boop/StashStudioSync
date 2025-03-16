@@ -567,6 +567,10 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     best_url = studio.get('url')
     best_parent_id = studio.get('parent_id')
     has_changes = False
+    seen_urls = set()  # Track seen URLs for deduplication
+    
+    if best_url:
+        seen_urls.add(best_url)
 
     # Search for matches across all endpoints
     matches = search_all_stashboxes(studio['name'])
@@ -575,11 +579,57 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
         logger(f"❌ No matches found for studio: {studio['name']}", "INFO")
         return
     
-    # Process all matches first to collect best data
+    # First pass: Process StashDB matches to get priority images
+    for match in matches:
+        if not match['is_tpdb'] and match['endpoint'] == 'https://stashdb.org/graphql':
+            try:
+                response = graphql_request(STASHBOX_FIND_STUDIO_QUERY, {'id': match['id']}, match['endpoint'], match['api_key'])
+                if response and 'findStudio' in response:
+                    studio_data = response['findStudio']
+                    
+                    if studio_data and studio_data.get('images') and (not best_image or force):
+                        # Try to find logo or poster in StashDB images
+                        logo_image = next((img['url'] for img in studio_data['images'] if 'logo' in img.get('url', '').lower()), None)
+                        poster_image = next((img['url'] for img in studio_data['images'] if 'poster' in img.get('url', '').lower()), None)
+                        
+                        if logo_image:
+                            best_image = logo_image
+                            has_changes = True
+                            logger(f"Found StashDB logo image for {studio['name']}", "INFO")
+                        elif poster_image:
+                            best_image = poster_image
+                            has_changes = True
+                            logger(f"Found StashDB poster image for {studio['name']}", "INFO")
+                        elif studio_data['images']:
+                            best_image = studio_data['images'][0].get('url')
+                            has_changes = True
+                            logger(f"Using first StashDB image for {studio['name']}", "INFO")
+                    
+                    # Process URLs from StashDB
+                    if studio_data.get('urls'):
+                        for url_data in studio_data['urls']:
+                            if url_data.get('type') == 'HOME' and url_data.get('url'):
+                                url = url_data['url']
+                                if url not in seen_urls:
+                                    if not best_url or force:
+                                        best_url = url
+                                        has_changes = True
+                                        logger(f"Using StashDB HOME URL for {studio['name']}: {url}", "INFO")
+                                    seen_urls.add(url)
+                                    break
+            except Exception as e:
+                logger(f"❌ Error processing StashDB match: {str(e)}", "ERROR")
+                continue
+    
+    # Second pass: Process remaining matches (ThePornDB and other stash boxes)
     for match in matches:
         endpoint = match['endpoint']
         endpoint_name = match['endpoint_name']
         
+        # Skip StashDB matches as they were already processed
+        if not match['is_tpdb'] and endpoint == 'https://stashdb.org/graphql':
+            continue
+            
         try:
             # Get full studio data
             if match['is_tpdb']:
@@ -602,29 +652,36 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
             all_stash_ids.append(stash_id)
             has_changes = True
             
-            # Update URL if available and better than current
+            # Update URL if available and not seen before
             if studio_data.get('urls'):
                 for url_data in studio_data['urls']:
                     if url_data.get('type') == 'HOME' and url_data.get('url'):
-                        if not best_url or force:
-                            best_url = url_data['url']
-                            has_changes = True
+                        url = url_data['url']
+                        if url not in seen_urls:
+                            if not best_url or force:
+                                best_url = url
+                                has_changes = True
+                                logger(f"Using {endpoint_name} HOME URL for {studio['name']}: {url}", "INFO")
+                            seen_urls.add(url)
                             break
 
-            # Update image with priority handling
-            if studio_data.get('images') and (not best_image or force):
+            # Update image only if we don't have one from StashDB
+            if not best_image and studio_data.get('images') and (not best_image or force):
                 logo_image = next((img['url'] for img in studio_data['images'] if 'logo' in img.get('url', '').lower()), None)
                 poster_image = next((img['url'] for img in studio_data['images'] if 'poster' in img.get('url', '').lower()), None)
                 
                 if logo_image:
                     best_image = logo_image
                     has_changes = True
-                elif poster_image and not best_image:
+                    logger(f"Using {endpoint_name} logo image for {studio['name']}", "INFO")
+                elif poster_image:
                     best_image = poster_image
                     has_changes = True
-                elif studio_data['images'] and not best_image:
+                    logger(f"Using {endpoint_name} poster image for {studio['name']}", "INFO")
+                elif studio_data['images']:
                     best_image = studio_data['images'][0].get('url')
                     has_changes = True
+                    logger(f"Using first {endpoint_name} image for {studio['name']}", "INFO")
 
             # Process parent studio
             if studio_data.get('parent') and (not best_parent_id or force):
