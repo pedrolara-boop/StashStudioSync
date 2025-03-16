@@ -32,3 +32,6 @@ stashPerformerMatchScrape/
 
 # Ignore backup/disabled Python files
 *.old 
+
+# Ignore archive folder
+archive/ 

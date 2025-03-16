@@ -4,7 +4,7 @@ version: 1.0
 url: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
 exec:
   - python
-  - "{pluginDir}/StashStudioMetadataMatcherPlugin.py"
+  - "{pluginDir}/StashStudioMetadataMatcher.py"
 interface: raw
 tasks:
   - name: "Match Studios"
@@ -37,4 +37,4 @@ tasks:
 
 ui:
   javascript:
-    - studioMatcherButton.js
+    - StashStudioMetadataMatcher.js
