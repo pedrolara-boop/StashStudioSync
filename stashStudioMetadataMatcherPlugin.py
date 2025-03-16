@@ -548,6 +548,12 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     # Track which endpoints we've processed
     processed_endpoints = set()
     
+    # Track if any data has changed
+    has_changes = new_stash_ids != existing_stash_ids
+    original_image = studio.get('image_path')
+    original_url = studio.get('url')
+    original_parent_id = studio.get('parent_id')
+    
     # Process each match
     for match in matches:
         endpoint = match['endpoint']
@@ -604,7 +610,8 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                                 'url': None,  # Add if available in your data
                                 'image_path': None  # Add if available in your data
                             }
-                            parent_studio = find_or_create_parent_studio(parent_info, config['stash_interface'])
+                            # Pass the endpoint URL instead of StashInterface object
+                            parent_studio = find_or_create_parent_studio(parent_info, endpoint)
                             if parent_studio and isinstance(parent_studio, dict):
                                 logger(f"👆 Setting parent studio to: {parent_studio.get('name')}", "INFO")
                                 studio['parent_id'] = parent_studio.get('id')
@@ -620,22 +627,44 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                                 studio['url'] = url_data['url']
                                 break
                 
-                # Update image if present
+                # Update image if present, with priority handling
                 if studio_data.get('images') and (not studio.get('image_path') or force):
+                    # First try to find a logo
+                    logo_image = None
+                    poster_image = None
+                    
                     for image_data in studio_data['images']:
-                        if image_data.get('url'):
-                            logger(f"🖼️ Setting image from: {image_data['url']}", "INFO")
-                            studio['image_path'] = image_data['url']
+                        image_url = image_data.get('url', '')
+                        # Check if it's a logo based on URL pattern
+                        if 'logo' in image_url.lower():
+                            logo_image = image_url
                             break
+                        # Store poster as fallback
+                        elif 'poster' in image_url.lower():
+                            poster_image = image_url
+                    
+                    # Use logo if found, otherwise use poster
+                    if logo_image:
+                        logger(f"🖼️ Setting logo image from: {logo_image}", "INFO")
+                        studio['image_path'] = logo_image
+                    elif poster_image:
+                        logger(f"🖼️ Setting poster image from: {poster_image}", "INFO")
+                        studio['image_path'] = poster_image
+                    # If neither logo nor poster found, use first available image
+                    elif studio_data['images']:
+                        first_image = studio_data['images'][0].get('url')
+                        if first_image:
+                            logger(f"🖼️ Setting fallback image from: {first_image}", "INFO")
+                            studio['image_path'] = first_image
         
         except Exception as e:
             logger(f"❌ Error processing match from {endpoint_name}: {str(e)}", "ERROR")
             continue
     
-    # Update the studio with new stash IDs if any were added
-    if new_stash_ids != existing_stash_ids:
+    # Update the studio if any data has changed
+    if has_changes or original_image != studio.get('image_path') or original_url != studio.get('url') or original_parent_id != studio.get('parent_id'):
         if not dry_run:
-            logger(f"💾 Updating studio {studio['name']} with new stash IDs", "INFO")
+            logger(f"💾 Updating studio {studio['name']} with new data", "INFO")
             try:
                 # Create a copy of the studio data without the StashInterface
                 studio_update = {
@@ -650,14 +679,26 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                 # Remove any None values to avoid schema validation errors
                 studio_update = {k: v for k, v in studio_update.items() if v is not None}
                 
+                # Log what's being updated
+                changes = []
+                if new_stash_ids != existing_stash_ids:
+                    changes.append("stash IDs")
+                if original_image != studio.get('image_path'):
+                    changes.append("image")
+                if original_url != studio.get('url'):
+                    changes.append("URL")
+                if original_parent_id != studio.get('parent_id'):
+                    changes.append("parent studio")
+                logger(f"📝 Updating {', '.join(changes)}", "INFO")
+                
                 update_studio(studio_update, studio['id'], dry_run)
                 logger(f"✅ Successfully updated studio {studio['name']}", "INFO")
             except Exception as e:
                 logger(f"❌ Error updating studio: {str(e)}", "ERROR")
         else:
-            logger(f"🔍 [DRY RUN] Would update studio {studio['name']} with new stash IDs", "INFO")
+            logger(f"🔍 [DRY RUN] Would update studio {studio['name']} with new data", "INFO")
     else:
-        logger(f"ℹ️ No new stash IDs to add for studio {studio['name']}", "INFO")
+        logger(f"ℹ️ No changes needed for studio {studio['name']}", "INFO")
 
 if __name__ == "__main__":
     main() 
