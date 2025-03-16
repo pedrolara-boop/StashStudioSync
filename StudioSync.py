@@ -567,12 +567,12 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     
     # Initialize variables to track all changes
     all_stash_ids = studio.get('stash_ids', []).copy()
-    best_image = studio.get('image_path')
+    best_image = None  # Changed: Initialize as None instead of getting existing image_path
     best_url = studio.get('url')
     best_parent_id = studio.get('parent_id')
     has_changes = False
-    seen_urls = set()  # Track seen URLs for deduplication
-    changes_summary = []  # Track what changed and from where
+    seen_urls = set()
+    changes_summary = []
     
     if best_url:
         seen_urls.add(best_url)
@@ -676,10 +676,24 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                             seen_urls.add(url)
                             break
 
-            # Update image only if we don't have one from StashDB
-            if not best_image and studio_data.get('images') and (not best_image or force):
-                logo_image = next((img['url'] for img in studio_data['images'] if 'logo' in img.get('url', '').lower()), None)
-                poster_image = next((img['url'] for img in studio_data['images'] if 'poster' in img.get('url', '').lower()), None)
+            # Update image only if we don't have one from StashDB and there are actual images
+            if studio_data.get('images') and isinstance(studio_data['images'], list) and len(studio_data['images']) > 0 and (not best_image or force):
+                # Try to find logo or poster in images, ensuring URLs are valid
+                logo_image = next((
+                    img['url'] 
+                    for img in studio_data['images'] 
+                    if img.get('url') and isinstance(img['url'], str) 
+                    and img['url'].startswith(('http://', 'https://'))
+                    and 'logo' in img['url'].lower()
+                ), None)
+                
+                poster_image = next((
+                    img['url'] 
+                    for img in studio_data['images'] 
+                    if img.get('url') and isinstance(img['url'], str)
+                    and img['url'].startswith(('http://', 'https://'))
+                    and 'poster' in img['url'].lower()
+                ), None)
                 
                 if logo_image:
                     best_image = logo_image
@@ -689,10 +703,12 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                     best_image = poster_image
                     has_changes = True
                     changes_summary.append(f"{endpoint_name} poster image")
-                elif studio_data['images']:
-                    best_image = studio_data['images'][0].get('url')
+                elif studio_data['images'][0].get('url') and isinstance(studio_data['images'][0]['url'], str) and studio_data['images'][0]['url'].startswith(('http://', 'https://')):
+                    best_image = studio_data['images'][0]['url']
                     has_changes = True
                     changes_summary.append(f"{endpoint_name} image")
+                else:
+                    logger(f"No valid image URLs found in {endpoint_name} response", "DEBUG")
 
             # Process parent studio
             if studio_data.get('parent') and (not best_parent_id or force):
@@ -721,20 +737,32 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     if has_changes:
         if not dry_run:
             try:
+                # Start with required fields
                 studio_update = {
                     'id': studio_id,
                     'name': studio_name,
-                    'url': best_url,
-                    'parent_id': best_parent_id,
-                    'image': best_image,
-                    'stash_ids': all_stash_ids
                 }
                 
-                # Remove any None values
-                studio_update = {k: v for k, v in studio_update.items() if v is not None}
+                # Only include optional fields if they have valid values
+                if best_url:
+                    studio_update['url'] = best_url
+                if best_parent_id:
+                    studio_update['parent_id'] = best_parent_id
+                if all_stash_ids:
+                    studio_update['stash_ids'] = all_stash_ids
+                
+                # Only include image if we actually found one and it has a valid URL
+                if best_image and isinstance(best_image, str) and best_image.startswith(('http://', 'https://')):
+                    studio_update['image'] = best_image
+                    logger(f"Including image URL in update: {best_image}", "DEBUG")
+                else:
+                    logger(f"No valid image URL found for {studio_name}, skipping image update", "DEBUG")
+                
+                # Log the final update data
+                logger(f"Studio update data: {studio_update}", "DEBUG")
                 
                 # Create a concise summary of changes
-                unique_changes = list(dict.fromkeys(changes_summary))  # Remove duplicates while preserving order
+                unique_changes = list(dict.fromkeys(changes_summary))
                 summary = f"📝 {studio_name}: Updated {', '.join(unique_changes)}"
                 if force:
                     summary += " (forced update)"
