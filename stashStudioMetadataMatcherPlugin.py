@@ -22,15 +22,6 @@ from logging.handlers import RotatingFileHandler
 from thefuzz import fuzz
 import argparse
 
-# Import core functionality from the main script
-from StashStudioMetadataMatcher import (
-    logger, update_single_studio, find_studio_by_name,
-    find_local_studio, get_all_studios,
-    search_studio, search_tpdb_site, find_studio, find_tpdb_site,
-    find_or_create_parent_studio, add_tpdb_id_to_studio, update_studio,
-    update_studio_data
-)
-
 # Constants for API endpoints
 TPDB_API_URL = "https://theporndb.net/graphql"
 TPDB_REST_API_URL = "https://api.theporndb.net"
@@ -66,8 +57,47 @@ query FindStudio($id: ID!) {
 }
 """
 
+# GraphQL queries for local Stash instance
+LOCAL_FIND_STUDIO_QUERY = """
+query FindStudio($id: ID!) {
+    findStudio(id: $id) {
+        id
+        name
+        url
+        parent_studio {
+            id
+            name
+        }
+        stash_ids {
+            endpoint
+            stash_id
+        }
+        image_path
+    }
+}
+"""
+
 config = {}  # Initialize empty config dictionary
 processed_studios = set()  # Track which studios we've already processed
+
+def logger(message, level="INFO"):
+    """
+    Unified logging function that uses stashapi.log
+    
+    Args:
+        message: The message to log
+        level: Log level (INFO, DEBUG, ERROR, PROGRESS)
+    """
+    if level == "INFO":
+        log.info(message)
+    elif level == "DEBUG":
+        log.debug(message)
+    elif level == "ERROR":
+        log.error(message)
+    elif level == "PROGRESS":
+        log.progress(message)
+    else:
+        log.info(message)  # Default to INFO for unknown levels
 
 def str_to_bool(value):
     """Convert string or boolean value to boolean"""
@@ -607,7 +637,7 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                             'url': None,
                             'image_path': None
                         }
-                        parent_studio = find_or_create_parent_studio(parent_info, endpoint)
+                        parent_studio = find_or_create_parent_studio(parent_info, endpoint, dry_run)
                         if parent_studio and isinstance(parent_studio, dict):
                             best_parent_id = parent_studio.get('id')
                             has_changes = True
@@ -830,6 +860,252 @@ def graphql_request(query, variables, endpoint, api_key, retries=5):
             else:
                 logger("Max retries reached. Giving up.", "ERROR")
                 raise
+
+def find_local_studio(studio_id):
+    """
+    Find a studio in the local Stash instance by ID
+    
+    Args:
+        studio_id: The ID of the studio to find
+        
+    Returns:
+        dict: Studio data or None if not found
+    """
+    logger(f"🔍 Finding local studio with ID: {studio_id}", "INFO")
+    
+    try:
+        # Use the StashInterface object that's already configured
+        stash = config.get('stash_interface')
+        if not stash:
+            logger("No Stash interface configured", "ERROR")
+            return None
+            
+        # Use the find_studio method from StashInterface
+        studio = stash.find_studio(studio_id)
+        return studio
+        
+    except Exception as e:
+        logger(f"Error finding local studio: {e}", "ERROR")
+        return None
+
+def find_or_create_parent_studio(parent_data, api_url, dry_run=False):
+    """
+    Find a parent studio in the local database or create it if it doesn't exist
+    
+    Args:
+        parent_data (dict): Parent studio data containing id and name
+        api_url (str): The API endpoint URL
+        dry_run (bool): If True, don't make any changes
+        
+    Returns:
+        str: Studio ID or None if not found/created
+    """
+    if not parent_data:
+        return None
+    
+    parent_id = parent_data.get('id')
+    parent_name = parent_data.get('name')
+    
+    if not parent_id or not parent_name:
+        return None
+    
+    logger(f"Looking for parent studio: {parent_name} (ID: {parent_id} on {api_url})", "DEBUG")
+    
+    try:
+        # Get StashInterface from config
+        stash = config.get('stash_interface')
+        if not stash:
+            logger("No Stash interface configured", "ERROR")
+            return None
+        
+        # Get all studios
+        studios = stash.find_studios()
+        if not studios:
+            studios = []
+            
+        # First, check if any studio has the StashDB ID
+        for studio in studios:
+            if studio.get('stash_ids'):
+                for stash_id in studio['stash_ids']:
+                    if stash_id.get('endpoint') == api_url and stash_id.get('stash_id') == parent_id:
+                        logger(f"Found parent studio by StashDB ID: {studio['name']} (ID: {studio['id']})", "DEBUG")
+                        
+                        # Check if this is a ThePornDB ID and the studio doesn't have a ThePornDB ID yet
+                        if "theporndb" in api_url.lower() and not any(s.get('endpoint') == 'https://theporndb.net/graphql' for s in studio.get('stash_ids', [])):
+                            # Add ThePornDB ID to the studio
+                            try:
+                                add_tpdb_id_to_studio(studio['id'], parent_id, dry_run)
+                            except Exception as e:
+                                logger(f"Error adding ThePornDB ID to parent studio: {e}", "ERROR")
+                        
+                        return studio['id']
+        
+        # If not found by StashDB ID, look for exact match by name
+        for studio in studios:
+            if studio['name'].lower() == parent_name.lower():
+                logger(f"Found parent studio by name: {studio['name']} (ID: {studio['id']})", "DEBUG")
+                
+                # Get existing stash_ids
+                existing_stash_ids = studio.get('stash_ids', []).copy()
+                
+                # Add the new stash_id if it doesn't already exist
+                if not any(s.get('endpoint') == api_url and s.get('stash_id') == parent_id for s in existing_stash_ids):
+                    existing_stash_ids.append({
+                        'stash_id': parent_id,
+                        'endpoint': api_url
+                    })
+                    
+                    if dry_run:
+                        logger(f"🔄 DRY RUN: Would add stash_id to parent studio: {studio['name']} (ID: {studio['id']})", "INFO")
+                    else:
+                        try:
+                            stash.update_studio({
+                                'id': studio['id'],
+                                'stash_ids': existing_stash_ids
+                            })
+                            logger(f"Added stash_id to parent studio: {studio['name']} (ID: {studio['id']})", "DEBUG")
+                        except Exception as e:
+                            logger(f"Error adding stash_id to parent studio: {e}", "ERROR")
+                
+                return studio['id']
+        
+        # If not found, create the parent studio
+        if dry_run:
+            logger(f"🔄 DRY RUN: Would create parent studio: {parent_name}", "INFO")
+            return "dry-run-parent-id"
+        else:
+            try:
+                new_studio = {
+                    'name': parent_name,
+                    'stash_ids': [{
+                        'stash_id': parent_id,
+                        'endpoint': api_url
+                    }]
+                }
+                
+                result = stash.create_studio(new_studio)
+                if result:
+                    logger(f"➕ Created parent studio: {parent_name} (ID: {result['id']})", "INFO")
+                    return result['id']
+            except Exception as e:
+                logger(f"Error creating parent studio: {e}", "ERROR")
+        
+        logger(f"Failed to create parent studio: {parent_name}", "ERROR")
+        return None
+        
+    except Exception as e:
+        logger(f"Error finding or creating parent studio: {e}", "ERROR")
+        return None
+
+def add_tpdb_id_to_studio(studio_id, tpdb_id, dry_run=False):
+    """
+    Add a ThePornDB ID to a studio that already exists
+    
+    Args:
+        studio_id (str): The ID of the studio to update
+        tpdb_id (str): The ThePornDB ID to add
+        dry_run (bool): If True, don't make any changes
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    logger(f"Adding ThePornDB ID {tpdb_id} to studio {studio_id}", "DEBUG")
+    
+    try:
+        # Get StashInterface from config
+        stash = config.get('stash_interface')
+        if not stash:
+            logger("No Stash interface configured", "ERROR")
+            return False
+        
+        # Get current studio data
+        studio = stash.find_studio(studio_id)
+        if not studio:
+            logger(f"Could not find studio with ID {studio_id}", "ERROR")
+            return False
+        
+        # Get existing stash_ids
+        existing_stash_ids = studio.get('stash_ids', []).copy()
+        
+        # Check if the ThePornDB ID already exists
+        if any(s.get('endpoint') == 'https://theporndb.net/graphql' and 
+               s.get('stash_id') == tpdb_id for s in existing_stash_ids):
+            logger(f"Studio {studio['name']} already has ThePornDB ID {tpdb_id}", "DEBUG")
+            return True
+        
+        # Add the ThePornDB ID
+        existing_stash_ids.append({
+            'stash_id': tpdb_id,
+            'endpoint': 'https://theporndb.net/graphql'
+        })
+        
+        if dry_run:
+            logger(f"🔄 DRY RUN: Would add ThePornDB ID {tpdb_id} to studio {studio['name']} (ID: {studio_id})", "INFO")
+            return True
+        else:
+            try:
+                # Update the studio with new stash_ids
+                update_data = {
+                    'id': studio_id,
+                    'stash_ids': existing_stash_ids
+                }
+                
+                result = stash.update_studio(update_data)
+                if result:
+                    logger(f"🔗 Added ThePornDB ID {tpdb_id} to studio {studio['name']} (ID: {studio_id})", "INFO")
+                    return True
+                else:
+                    logger(f"Failed to update studio {studio['name']} with ThePornDB ID", "ERROR")
+                    return False
+                    
+            except Exception as e:
+                logger(f"Error adding ThePornDB ID to studio: {e}", "ERROR")
+                return False
+                
+    except Exception as e:
+        logger(f"Error in add_tpdb_id_to_studio: {e}", "ERROR")
+        return False
+
+def update_studio(studio_data, local_id, dry_run=False):
+    """
+    Update a studio with new data
+    
+    Args:
+        studio_data (dict): The studio data to update
+        local_id (str): The ID of the studio to update
+        dry_run (bool): If True, don't make any changes
+        
+    Returns:
+        dict: Updated studio data or None if failed
+    """
+    logger(f"📝 Updating studio with ID: {local_id}", "INFO")
+    
+    try:
+        # Get StashInterface from config
+        stash = config.get('stash_interface')
+        if not stash:
+            logger("No Stash interface configured", "ERROR")
+            return None
+        
+        # Ensure we have the local ID in the data
+        studio_data['id'] = local_id
+        
+        if dry_run:
+            logger(f"🔄 DRY RUN: Would update studio {local_id} with data: {studio_data}", "INFO")
+            return studio_data
+        else:
+            # Use the StashInterface to update the studio
+            result = stash.update_studio(studio_data)
+            if result:
+                logger(f"✅ Successfully updated studio {local_id}", "DEBUG")
+                return result
+            else:
+                logger(f"❌ Failed to update studio {local_id}", "ERROR")
+                return None
+                
+    except Exception as e:
+        logger(f"Error updating studio {local_id}: {e}", "ERROR")
+        return None
 
 if __name__ == "__main__":
     main() 
