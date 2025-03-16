@@ -721,11 +721,12 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                             'url': None,
                             'image_path': None
                         }
-                        parent_studio = find_or_create_parent_studio(parent_info, endpoint, dry_run)
-                        if parent_studio and isinstance(parent_studio, dict):
-                            best_parent_id = parent_studio.get('id')
+                        parent_studio_id = find_or_create_parent_studio(parent_info, endpoint, dry_run)
+                        if parent_studio_id:  # Just check if we got an ID back
+                            best_parent_id = parent_studio_id
                             has_changes = True
                             changes_summary.append(f"Parent from {endpoint_name}")
+                            logger(f"🔗 Linking parent studio {parent_data.get('name')} to {studio_name}", "INFO")
                     except Exception as e:
                         logger(f"❌ Parent studio error for {studio_name}: {str(e)}", "ERROR")
 
@@ -979,17 +980,83 @@ def find_local_studio(studio_id):
         logger(f"Error finding local studio: {e}", "ERROR")
         return None
 
-def find_or_create_parent_studio(parent_data, api_url, dry_run=False):
+def search_parent_studio_all_endpoints(parent_name, parent_id, original_endpoint):
     """
-    Find a parent studio in the local database or create it if it doesn't exist
+    Search for a parent studio across all configured endpoints
     
     Args:
-        parent_data (dict): Parent studio data containing id and name
-        api_url (str): The API endpoint URL
-        dry_run (bool): If True, don't make any changes
+        parent_name (str): Name of the parent studio
+        parent_id (str): ID of the parent studio from the original endpoint
+        original_endpoint (str): The endpoint where this parent was originally found
         
     Returns:
-        str: Studio ID or None if not found/created
+        list: List of potential parent studio matches with their metadata
+    """
+    matches = []
+    
+    # Search across all configured endpoints
+    for endpoint in config['stashbox_endpoints']:
+        try:
+            if not endpoint['api_key']:
+                continue
+                
+            # Skip the original endpoint as we already have that data
+            if endpoint['endpoint'] == original_endpoint:
+                matches.append({
+                    'id': parent_id,
+                    'name': parent_name,
+                    'endpoint': original_endpoint,
+                    'endpoint_name': endpoint['name'],
+                    'api_key': endpoint['api_key'],
+                    'is_tpdb': endpoint['is_tpdb']
+                })
+                continue
+                
+            # Search on ThePornDB
+            if endpoint['is_tpdb']:
+                tpdb_results = search_tpdb_site(parent_name, endpoint['api_key'])
+                if tpdb_results:
+                    for result in tpdb_results:
+                        matches.append({
+                            'id': result['id'],
+                            'name': result['name'],
+                            'endpoint': endpoint['endpoint'],
+                            'endpoint_name': endpoint['name'],
+                            'api_key': endpoint['api_key'],
+                            'is_tpdb': True,
+                            'parent': result.get('parent')  # In case of nested parents
+                        })
+            
+            # Search on StashDB or other Stash-box endpoints
+            else:
+                response = graphql_request(
+                    STASHBOX_SEARCH_STUDIO_QUERY,
+                    {'term': parent_name},
+                    endpoint['endpoint'],
+                    endpoint['api_key']
+                )
+                
+                if response and 'searchStudio' in response:
+                    for result in response['searchStudio']:
+                        matches.append({
+                            'id': result['id'],
+                            'name': result['name'],
+                            'endpoint': endpoint['endpoint'],
+                            'endpoint_name': endpoint['name'],
+                            'api_key': endpoint['api_key'],
+                            'is_tpdb': False
+                        })
+                        
+        except Exception as e:
+            logger(f"Error searching {endpoint['name']} for parent studio: {e}", "ERROR")
+            continue
+            
+    logger(f"✅ Found parent studio matches: {len(matches)} across endpoints", "INFO")
+    return matches
+
+def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
+    """
+    Enhanced version that searches across all endpoints
     """
     if not parent_data:
         return None
@@ -1000,10 +1067,9 @@ def find_or_create_parent_studio(parent_data, api_url, dry_run=False):
     if not parent_id or not parent_name:
         return None
     
-    logger(f"Looking for parent studio: {parent_name} (ID: {parent_id} on {api_url})", "DEBUG")
+    logger(f"🔍 Searching for parent studio: {parent_name}", "INFO")
     
     try:
-        # Get StashInterface from config
         stash = config.get('stash_interface')
         if not stash:
             logger("No Stash interface configured", "ERROR")
@@ -1013,79 +1079,141 @@ def find_or_create_parent_studio(parent_data, api_url, dry_run=False):
         studios = stash.find_studios()
         if not studios:
             studios = []
-            
-        # First, check if any studio has the StashDB ID
+        
+        # Search across all endpoints
+        parent_matches = search_parent_studio_all_endpoints(parent_name, parent_id, original_endpoint)
+        
+        # First, try to find existing studio by any of the matched IDs
         for studio in studios:
             if studio.get('stash_ids'):
-                for stash_id in studio['stash_ids']:
-                    if stash_id.get('endpoint') == api_url and stash_id.get('stash_id') == parent_id:
-                        logger(f"Found parent studio by StashDB ID: {studio['name']} (ID: {studio['id']})", "DEBUG")
+                for match in parent_matches:
+                    if any(sid['endpoint'] == match['endpoint'] and 
+                          sid['stash_id'] == match['id'] 
+                          for sid in studio['stash_ids']):
+                        logger(f"✅ Found existing parent studio: {studio['name']}", "INFO")
                         
-                        # Check if this is a ThePornDB ID and the studio doesn't have a ThePornDB ID yet
-                        if "theporndb" in api_url.lower() and not any(s.get('endpoint') == 'https://theporndb.net/graphql' for s in studio.get('stash_ids', [])):
-                            # Add ThePornDB ID to the studio
-                            try:
-                                add_tpdb_id_to_studio(studio['id'], parent_id, dry_run)
-                            except Exception as e:
-                                logger(f"Error adding ThePornDB ID to parent studio: {e}", "ERROR")
+                        # Update studio with any missing IDs from other endpoints
+                        if not dry_run:
+                            existing_stash_ids = studio.get('stash_ids', []).copy()
+                            updated = False
+                            
+                            for other_match in parent_matches:
+                                if not any(sid['endpoint'] == other_match['endpoint'] and 
+                                         sid['stash_id'] == other_match['id'] 
+                                         for sid in existing_stash_ids):
+                                    existing_stash_ids.append({
+                                        'stash_id': other_match['id'],
+                                        'endpoint': other_match['endpoint']
+                                    })
+                                    updated = True
+                            
+                            if updated:
+                                try:
+                                    stash.update_studio({
+                                        'id': studio['id'],
+                                        'stash_ids': existing_stash_ids
+                                    })
+                                    logger(f"📝 Updated parent studio {studio['name']} with {len(existing_stash_ids)} additional IDs", "INFO")
+                                except Exception as e:
+                                    logger(f"Error updating parent studio IDs: {e}", "ERROR")
                         
                         return studio['id']
         
-        # If not found by StashDB ID, look for exact match by name
+        # If not found by ID, try exact name match
         for studio in studios:
             if studio['name'].lower() == parent_name.lower():
-                logger(f"Found parent studio by name: {studio['name']} (ID: {studio['id']})", "DEBUG")
+                logger(f"✅ Found existing parent studio: {studio['name']}", "INFO")
                 
-                # Get existing stash_ids
-                existing_stash_ids = studio.get('stash_ids', []).copy()
-                
-                # Add the new stash_id if it doesn't already exist
-                if not any(s.get('endpoint') == api_url and s.get('stash_id') == parent_id for s in existing_stash_ids):
-                    existing_stash_ids.append({
-                        'stash_id': parent_id,
-                        'endpoint': api_url
-                    })
+                if not dry_run:
+                    # Add all matched IDs to the studio
+                    existing_stash_ids = studio.get('stash_ids', []).copy()
+                    updated = False
                     
-                    if dry_run:
-                        logger(f"🔄 DRY RUN: Would add stash_id to parent studio: {studio['name']} (ID: {studio['id']})", "INFO")
-                    else:
+                    for match in parent_matches:
+                        if not any(sid['endpoint'] == match['endpoint'] and 
+                                 sid['stash_id'] == match['id'] 
+                                 for sid in existing_stash_ids):
+                            existing_stash_ids.append({
+                                'stash_id': match['id'],
+                                'endpoint': match['endpoint']
+                            })
+                            updated = True
+                    
+                    if updated:
                         try:
                             stash.update_studio({
                                 'id': studio['id'],
                                 'stash_ids': existing_stash_ids
                             })
-                            logger(f"Added stash_id to parent studio: {studio['name']} (ID: {studio['id']})", "DEBUG")
+                            logger(f"📝 Updated parent studio {studio['name']} with {len(existing_stash_ids)} additional IDs", "INFO")
                         except Exception as e:
-                            logger(f"Error adding stash_id to parent studio: {e}", "ERROR")
+                            logger(f"Error updating parent studio IDs: {e}", "ERROR")
                 
                 return studio['id']
         
-        # If not found, create the parent studio
+        # If not found, create new parent studio with all matched IDs
         if dry_run:
-            logger(f"🔄 DRY RUN: Would create parent studio: {parent_name}", "INFO")
+            logger(f"🔄 DRY RUN: Would create parent studio: {parent_name} with IDs from multiple sources", "INFO")
             return "dry-run-parent-id"
         else:
             try:
+                # Get full studio data from each endpoint to find images
+                best_image = None
+                for match in parent_matches:
+                    try:
+                        if match['is_tpdb']:
+                            studio_data = find_tpdb_site(match['id'], match['api_key'])
+                        else:
+                            response = graphql_request(
+                                STASHBOX_FIND_STUDIO_QUERY,
+                                {'id': match['id']},
+                                match['endpoint'],
+                                match['api_key']
+                            )
+                            studio_data = response.get('findStudio') if response else None
+
+                        if studio_data and studio_data.get('images'):
+                            # Try to find logo or poster
+                            logo_image = next((img['url'] for img in studio_data['images'] 
+                                            if 'logo' in img.get('url', '').lower()), None)
+                            poster_image = next((img['url'] for img in studio_data['images'] 
+                                              if 'poster' in img.get('url', '').lower()), None)
+                            
+                            if logo_image and not best_image:
+                                best_image = logo_image
+                            elif poster_image and not best_image:
+                                best_image = poster_image
+                            elif studio_data['images'] and not best_image:
+                                best_image = studio_data['images'][0].get('url')
+                    except Exception as e:
+                        logger(f"Error getting images for parent studio from {match['endpoint_name']}: {e}", "DEBUG")
+                        continue
+
+                stash_ids = [{
+                    'stash_id': match['id'],
+                    'endpoint': match['endpoint']
+                } for match in parent_matches]
+                
                 new_studio = {
                     'name': parent_name,
-                    'stash_ids': [{
-                        'stash_id': parent_id,
-                        'endpoint': api_url
-                    }]
+                    'stash_ids': stash_ids
                 }
                 
+                if best_image:
+                    new_studio['image'] = best_image
+                    logger(f"📸 Adding image to parent studio {parent_name}", "INFO")
+
                 result = stash.create_studio(new_studio)
                 if result:
-                    logger(f"➕ Created parent studio: {parent_name} (ID: {result['id']})", "INFO")
+                    logger(f"➕ Created parent studio: {parent_name} with IDs from {len(stash_ids)} sources", "INFO")
                     return result['id']
             except Exception as e:
                 logger(f"Error creating parent studio: {e}", "ERROR")
         
-        logger(f"Failed to create parent studio: {parent_name}", "ERROR")
         return None
         
     except Exception as e:
-        logger(f"Error finding or creating parent studio: {e}", "ERROR")
+        logger(f"Error in find_or_create_parent_studio: {e}", "ERROR")
         return None
 
 def add_tpdb_id_to_studio(studio_id, tpdb_id, dry_run=False):
