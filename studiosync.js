@@ -15,12 +15,12 @@
  * Functionality:
  * - Adds a "Match Metadata" button to studio pages
  * - Button appears in the edit container next to other studio controls
- * - Executes the StashStudioMetadataMatcher plugin for the current studio
+ * - Executes the StudioSync plugin for the current studio
  * - Shows loading/success/error states with appropriate icons
  * - Automatically reloads the page after successful matching
  * 
  * Requirements:
- * - Stash instance with StashStudioMetadataMatcher plugin installed
+ * - Stash instance with StudioSync plugin installed
  * - FontAwesome icons (provided by Stash)
  * - Access to Stash's GraphQL endpoint
  * 
@@ -84,7 +84,7 @@
                         }
                     `,
                     variables: {
-                        plugin_id: "StashStudioMetadataMatcher",
+                        plugin_id: "StudioSync",
                         args: [
                             {
                                 key: "studio_id",

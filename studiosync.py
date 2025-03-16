@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-StashStudioMetadataMatcherPlugin
+StudioSync
 
 A plugin for matching studios in Stashapp database with ThePornDB and StashDB.
 
-GitHub: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
+GitHub: https://github.com/pedrolara-boop/StudioSync
 License: MIT
 """
 
@@ -127,7 +127,7 @@ def setup_rotating_logger(log_path):
     rotating_handler.setFormatter(formatter)
     
     # Create logger
-    logger = logging.getLogger('StashStudioMetadataMatcher')
+    logger = logging.getLogger('StudioSync')
     logger.setLevel(logging.INFO)
     logger.addHandler(rotating_handler)
     
@@ -210,7 +210,7 @@ def main():
             
             # Make the mode setting visible in the logs at startup
             mode_str = " (FORCE)" if force else " (DRY RUN)" if dry_run else ""
-            log.info(f"🚀 Starting StashStudioMetadataMatcherPlugin{mode_str} - Fuzzy threshold: {config['fuzzy_threshold']}")
+            log.info(f"🚀 Starting StudioSync{mode_str} - Fuzzy threshold: {config['fuzzy_threshold']}")
             
             # Process single studio or all studios
             if studio_id:
@@ -224,13 +224,13 @@ def main():
                 log.info("🔄 Running update for all studios")
                 update_all_studios(dry_run, force)
             
-            log.info("✅ StashStudioMetadataMatcherPlugin completed")
+            log.info("✅ StudioSync completed")
         else:
             print("No input received from stdin. This script is meant to be run as a Stash plugin.")
     except json.JSONDecodeError:
         print("Failed to decode JSON input. This script is meant to be run as a Stash plugin.")
     except Exception as e:
-        print(f"Error in StashStudioMetadataMatcherPlugin: {str(e)}")
+        print(f"Error in StudioSync: {str(e)}")
 
 def search_tpdb_site(term, api_key):
     """Search for a site on ThePornDB using the REST API"""

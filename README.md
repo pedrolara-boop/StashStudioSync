@@ -1,4 +1,4 @@
-# StashStudioMetadataMatcher Plugin
+# StudioSync Plugin
 
 A Stash plugin for automatically matching and updating studios with metadata from all configured Stash-box endpoints.
 
@@ -19,8 +19,8 @@ A Stash plugin for automatically matching and updating studios with metadata fro
 1. Clone the repository to your Stash plugins directory:
    ```bash
    cd ~/.stash/plugins  # Adjust path according to your Stash installation
-   git clone https://github.com/pedrolara-boop/StashStudioMetadataMatcher.git
-   cd StashStudioMetadataMatcher
+   git clone https://github.com/pedrolara-boop/StudioSync.git
+   cd StudioSync
    ```
 
 2. Install the Python requirements:
@@ -41,7 +41,7 @@ A Stash plugin for automatically matching and updating studios with metadata fro
 
 4. Verify installation:
    - Go to Settings > Tasks
-   - You should see "StashStudioMetadataMatcher" in the tasks list
+   - You should see "StudioSync" in the tasks list
    - Available tasks should look like this:
      ![Plugin Tasks Screenshot](screenshot.png)
 
@@ -103,7 +103,7 @@ No separate configuration file needed! The plugin uses:
 ### Logs
 
 Logs are stored in the plugin directory:
-- `studio_metadata_matcher.log` (current log)
+- `studiosync.log` (current log)
 - Rotated logs: `.log.1` through `.log.5`
 - Maximum 50MB total log storage
 
@@ -113,8 +113,8 @@ If you need the standalone script version with additional features like matching
 
 ## Support
 
-- [Report Issues](https://github.com/pedrolara-boop/StashStudioMetadataMatcher/issues)
-- [GitHub Repository](https://github.com/pedrolara-boop/StashStudioMetadataMatcher)
+- [Report Issues](https://github.com/pedrolara-boop/StudioSync/issues)
+- [GitHub Repository](https://github.com/pedrolara-boop/StudioSync)
 
 ## License
 

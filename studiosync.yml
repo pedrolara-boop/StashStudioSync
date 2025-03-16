@@ -1,10 +1,10 @@
-name: StashStudioMetadataMatcher
+name: StudioSync
 description: Match and update studios with metadata from all configured Stash-box endpoints (ThePornDB, StashDB, and any additional endpoints). Features include automatic parent studio creation and linking, URL and image updates, and intelligent data merging from multiple sources.
 version: 1.0
-url: https://github.com/pedrolara-boop/StashStudioMetadataMatcher
+url: https://github.com/pedrolara-boop/StudioSync
 exec:
   - python
-  - "{pluginDir}/StashStudioMetadataMatcher.py"
+  - "{pluginDir}/studiosync.py"
 interface: raw
 tasks:
   - name: "Match Studios"
@@ -37,4 +37,4 @@ tasks:
 
 ui:
   javascript:
-    - StashStudioMetadataMatcher.js
+    - studiosync.js

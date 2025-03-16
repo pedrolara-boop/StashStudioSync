@@ -27,8 +27,8 @@ Thumbs.db
 # Ignore macOS resource fork files
 ._*
 
-# Ignore example folder
-stashPerformerMatchScrape/
+# Ignore VSCode workspace files
+*.code-workspace
 
 # Ignore backup/disabled Python files
 *.old 
