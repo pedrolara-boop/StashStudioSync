@@ -23,7 +23,7 @@ from thefuzz import fuzz
 # Import core functionality from the main script
 from StashStudioMetadataMatcher import (
     logger, update_all_studios, update_single_studio, find_studio_by_name,
-    fuzzy_match_studio_name, graphql_request, find_local_studio, get_all_studios,
+    graphql_request, find_local_studio, get_all_studios,
     search_studio, search_tpdb_site, find_studio, find_tpdb_site,
     find_or_create_parent_studio, add_tpdb_id_to_studio, update_studio,
     update_studio_data
@@ -64,6 +64,14 @@ query FindStudio($id: ID!) {
 }
 """
 
+config = {}  # Initialize empty config dictionary
+
+def str_to_bool(value):
+    """Convert string or boolean value to boolean"""
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ('true', '1', 'yes', 'on')
+
 def setup_rotating_logger(log_path):
     """Set up a rotating logger that will create new files when the size limit is reached"""
     # Create a rotating file handler
@@ -97,6 +105,7 @@ def main():
     Main function for the plugin version.
     Reads plugin arguments from stdin and processes studios accordingly.
     """
+    global config  # Reference the global config
     try:
         if not sys.stdin.isatty():
             plugin_input = json.loads(sys.stdin.read())
@@ -108,7 +117,7 @@ def main():
             stash_config = stash.get_configuration()
             
             # Create our config dictionary
-            config = {
+            config.update({
                 'scheme': server_connection.get('Scheme', 'http'),
                 'host': server_connection.get('Host', 'localhost'),
                 'port': server_connection.get('Port', 9999),
@@ -120,29 +129,47 @@ def main():
                 'use_fuzzy_matching': True,
                 'stash_interface': stash,
                 'stashbox_endpoints': []
-            }
+            })
             
             # Get API keys from Stash configuration
             if 'stashBoxes' in stash_config.get('general', {}):
+                logger("🔍 Configuring Stash-box endpoints:", "INFO")
+                configured_endpoints = set()  # Track unique endpoints
+                
                 for stash_box in stash_config['general']['stashBoxes']:
                     endpoint = stash_box.get('endpoint', '')
                     api_key = stash_box.get('api_key', '')
                     name = stash_box.get('name', 'Unknown')
                     
                     if endpoint and api_key:
+                        # Skip duplicate endpoints
+                        if endpoint in configured_endpoints:
+                            logger(f"⚠️ Skipping duplicate endpoint: {name} ({endpoint})", "INFO")
+                            continue
+                            
+                        configured_endpoints.add(endpoint)
                         is_tpdb = "theporndb.net" in endpoint.lower()
                         
-                        config['stashbox_endpoints'].append({
+                        endpoint_info = {
                             'name': name,
                             'endpoint': endpoint,
                             'api_key': api_key,
                             'is_tpdb': is_tpdb
-                        })
+                        }
+                        
+                        config['stashbox_endpoints'].append(endpoint_info)
                         
                         if is_tpdb:
                             config['tpdb_api_key'] = api_key
-                        elif "stashdb.org" in endpoint.lower():
-                            config['stashdb_api_key'] = api_key
+                            logger(f"✅ Added ThePornDB endpoint: {name}", "INFO")
+                        else:
+                            # All other endpoints are treated as standard Stash-boxes
+                            logger(f"✅ Added Stash-box endpoint: {name} ({endpoint})", "INFO")
+                
+                # Summary of configured endpoints
+                stashbox_count = len([e for e in config['stashbox_endpoints'] if not e['is_tpdb']])
+                has_tpdb = any(e['is_tpdb'] for e in config['stashbox_endpoints'])
+                logger(f"📊 Total endpoints configured: {len(config['stashbox_endpoints'])} ({stashbox_count} Stash-boxes, TPDB: {has_tpdb})", "INFO")
             
             # Get plugin arguments
             dry_run = str_to_bool(plugin_args.get('dry_run', False))
@@ -158,7 +185,7 @@ def main():
                 log.info(f"🔍 Running update for single studio ID: {studio_id}")
                 studio = find_local_studio(studio_id)
                 if studio:
-                    update_studio_data(studio, dry_run, force)
+                    wrapped_update_studio_data(studio, dry_run, force)
                 else:
                     log.error(f"❌ Studio with ID {studio_id} not found.")
             else:
@@ -329,14 +356,16 @@ def find_tpdb_site(site_id, api_key):
         return None
 
 def fuzzy_match_studio_name(name, candidates, threshold=85):
-    """Enhanced fuzzy matching with clear result logging"""
+    """Enhanced fuzzy matching with clear result logging and endpoint tracking"""
     if not name or not candidates:
-        return None, 0
+        logger("No name or candidates provided for fuzzy matching", "DEBUG")
+        return None, 0, []
     
     # Group matches by endpoint for clearer logging
     matches_by_endpoint = {}
-    best_match = None
-    best_score = 0
+    best_matches = []  # Store best matches from each endpoint
+    overall_best_match = None
+    overall_best_score = 0
     
     for candidate in candidates:
         endpoint_name = candidate.get('endpoint_name', 'Unknown')
@@ -352,29 +381,283 @@ def fuzzy_match_studio_name(name, candidates, threshold=85):
             'original': candidate
         })
         
-        # Update best match while processing
-        if score > best_score:
-            best_score = score
-            best_match = candidate
+        # Track best match per endpoint and overall
+        if score >= threshold:
+            if not matches_by_endpoint.get(f"{endpoint_name}_best_score") or score > matches_by_endpoint[f"{endpoint_name}_best_score"]:
+                matches_by_endpoint[f"{endpoint_name}_best_score"] = score
+                matches_by_endpoint[f"{endpoint_name}_best_match"] = candidate
+                
+            if score > overall_best_score:
+                overall_best_score = score
+                overall_best_match = candidate
     
     # Log results by endpoint
-    if matches_by_endpoint:
-        logger(f"🎯 Fuzzy matching results for '{name}':", "INFO")
-        for endpoint, matches in matches_by_endpoint.items():
+    logger(f"🎯 Fuzzy matching results for '{name}':", "INFO")
+    for endpoint, matches in matches_by_endpoint.items():
+        if isinstance(matches, list):  # Skip our _best_score and _best_match entries
             # Sort matches by score
             sorted_matches = sorted(matches, key=lambda x: x['score'], reverse=True)
             if sorted_matches:
                 logger(f"   {endpoint}:", "INFO")
                 # Show top 3 matches for each endpoint
                 for match in sorted_matches[:3]:
-                    logger(f"      - {match['name']} (Score: {match['score']}%)", "INFO")
+                    match_type = "EXACT" if match['score'] == 100 else "FUZZY"
+                    logger(f"      - {match['name']} ({match_type} Score: {match['score']}%)", "INFO")
+                
+                # If this endpoint had a match above threshold, add it to best matches
+                best_for_endpoint = matches_by_endpoint.get(f"{endpoint}_best_match")
+                if best_for_endpoint:
+                    best_matches.append(best_for_endpoint)
     
-    if best_score >= threshold and best_match is not None:
-        logger(f"✅ Best match: '{best_match['name']}' (Score: {best_score}%)", "INFO")
-        return best_match, best_score
+    if overall_best_match is not None and overall_best_score >= threshold:
+        logger(f"✅ Best overall match: '{overall_best_match['name']}' from {overall_best_match['endpoint_name']} (Score: {overall_best_score}%)", "INFO")
+        # Return both the overall best match and all matches above threshold
+        return overall_best_match, overall_best_score, best_matches
     else:
         logger(f"❌ No matches above threshold ({threshold}%)", "INFO")
-        return None, 0
+        return None, 0, []
+
+def search_all_stashboxes(studio_name):
+    """Search for a studio across all configured Stash-box endpoints"""
+    global config
+    results = []
+    
+    logger(f"🔍 Searching for studio: {studio_name!r}", "INFO")
+    
+    # Fix nested f-string issue by pre-formatting the endpoint list
+    endpoint_list = [f"{e['name']} ({e['endpoint']})" for e in config['stashbox_endpoints']]
+    logger(f"🔧 Configured endpoints: {endpoint_list}", "INFO")
+    
+    for endpoint in config['stashbox_endpoints']:
+        try:
+            if not endpoint['api_key']:
+                logger(f"⚠️ Skipping {endpoint['name']} - No API key", "INFO")
+                continue
+                
+            logger(f"📌 Searching {endpoint['name']} ({endpoint['endpoint']})", "INFO")
+            
+            if endpoint['is_tpdb']:
+                # TPDB REST API search
+                tpdb_results = search_tpdb_site(studio_name, endpoint['api_key'])
+                if tpdb_results:
+                    for result in tpdb_results:
+                        results.append({
+                            'id': result['id'],
+                            'name': result['name'],
+                            'endpoint': endpoint['endpoint'],
+                            'endpoint_name': endpoint['name'],
+                            'api_key': endpoint['api_key'],
+                            'is_tpdb': True,
+                            'parent': result.get('parent')
+                        })
+            else:
+                # Standard Stash-box search (StashDB and PMV)
+                try:
+                    logger(f"Making GraphQL request to {endpoint['endpoint']} for {studio_name!r}", "INFO")
+                    response = graphql_request(
+                        STASHBOX_SEARCH_STUDIO_QUERY, 
+                        {'term': studio_name}, 
+                        endpoint['endpoint'], 
+                        endpoint['api_key']
+                    )
+                    
+                    logger(f"GraphQL response from {endpoint['name']}: {response}", "DEBUG")
+                    
+                    if response and 'searchStudio' in response:
+                        found_results = response['searchStudio']
+                        if found_results:
+                            for result in found_results:
+                                results.append({
+                                    'id': result['id'],
+                                    'name': result['name'],
+                                    'endpoint': endpoint['endpoint'],
+                                    'endpoint_name': endpoint['name'],
+                                    'api_key': endpoint['api_key'],
+                                    'is_tpdb': False,
+                                    'parent': result.get('parent')
+                                })
+                except Exception as e:
+                    logger(f"GraphQL error for {endpoint['name']}: {str(e)}", "ERROR")
+            
+            # Log results for this endpoint
+            endpoint_results = [r for r in results if r['endpoint'] == endpoint['endpoint']]
+            if endpoint_results:
+                logger(f"✨ Found {len(endpoint_results)} results on {endpoint['name']}", "INFO")
+                for result in endpoint_results:
+                    logger(f"   - {result['name']} (ID: {result['id']})", "INFO")
+            else:
+                logger(f"❌ No results found on {endpoint['name']}", "INFO")
+                
+        except Exception as e:
+            logger(f"Error searching {endpoint['name']}: {e}", "ERROR")
+            continue
+    
+    # After gathering all results, perform fuzzy matching
+    if results:
+        logger(f"🎯 Running fuzzy matching on {len(results)} total results", "INFO")
+        best_match, score, all_matches = fuzzy_match_studio_name(studio_name, results)
+        
+        # Log matches by endpoint
+        if all_matches:
+            logger("🎯 Matches found from different endpoints:", "INFO")
+            matches_by_endpoint = {}
+            for match in all_matches:
+                endpoint = match['endpoint_name']
+                if endpoint not in matches_by_endpoint:
+                    matches_by_endpoint[endpoint] = []
+                matches_by_endpoint[endpoint].append(match)
+            
+            for endpoint, matches in matches_by_endpoint.items():
+                logger(f"   {endpoint}:", "INFO")
+                for match in matches:
+                    logger(f"      - {match['name']} (ID: {match['id']})", "INFO")
+        
+        if best_match:
+            logger(f"✅ Best overall match: {best_match['name']} from {best_match['endpoint_name']} (Score: {score}%)", "INFO")
+            
+        return all_matches if all_matches else []
+    else:
+        logger(f"❌ No matches found across any endpoints for {studio_name!r}", "INFO")
+        return []
+
+def wrapped_update_studio_data(studio, dry_run=False, force=False):
+    """Update studio data with matches from all configured endpoints"""
+    global config
+    
+    logger(f"🔄 Processing studio: {studio['name']}", "INFO")
+    
+    # Skip if studio already has all IDs and data (unless force is True)
+    if not force and studio.get('stash_ids') and studio.get('image_path') and studio.get('url'):
+        logger(f"✅ Studio {studio['name']} already has all data, skipping", "INFO")
+        return
+    
+    # Get existing stash IDs
+    existing_stash_ids = studio.get('stash_ids', [])
+    existing_endpoints = {stash_id['endpoint']: stash_id['stash_id'] for stash_id in existing_stash_ids}
+    
+    # Search for matches across all endpoints
+    matches = search_all_stashboxes(studio['name'])
+    
+    if not matches:
+        logger(f"❌ No matches found for studio: {studio['name']}", "INFO")
+        return
+    
+    # Initialize new stash IDs list with existing IDs
+    new_stash_ids = existing_stash_ids.copy()
+    
+    # Track which endpoints we've processed
+    processed_endpoints = set()
+    
+    # Process each match
+    for match in matches:
+        endpoint = match['endpoint']
+        endpoint_name = match['endpoint_name']
+        
+        # Skip if we already have an ID for this endpoint
+        if endpoint in existing_endpoints and not force:
+            logger(f"ℹ️ Already have ID for {endpoint_name}, skipping", "INFO")
+            continue
+        
+        # Skip if we've already processed this endpoint
+        if endpoint in processed_endpoints:
+            continue
+        
+        processed_endpoints.add(endpoint)
+        
+        try:
+            if match['is_tpdb']:
+                # Get full studio data from TPDB
+                studio_data = find_tpdb_site(match['id'], match['api_key'])
+            else:
+                # Get full studio data from Stash-box
+                response = graphql_request(
+                    STASHBOX_FIND_STUDIO_QUERY,
+                    {'id': match['id']},
+                    endpoint,
+                    match['api_key']
+                )
+                studio_data = response.get('findStudio') if response else None
+            
+            if studio_data:
+                # Add or update stash ID for this endpoint
+                stash_id = {
+                    'endpoint': endpoint,
+                    'stash_id': studio_data['id']
+                }
+                
+                # Remove existing ID for this endpoint if it exists
+                new_stash_ids = [sid for sid in new_stash_ids if sid['endpoint'] != endpoint]
+                new_stash_ids.append(stash_id)
+                
+                logger(f"✅ Added/Updated ID for {endpoint_name}: {studio_data['id']}", "INFO")
+                
+                # Process parent studio if present
+                if studio_data.get('parent'):
+                    parent_data = studio_data['parent']
+                    logger(f"📦 Found parent studio: {parent_data.get('name', 'Unknown')}", "INFO")
+                    if not dry_run:
+                        try:
+                            # Create a copy of parent_data without any non-serializable objects
+                            parent_info = {
+                                'id': parent_data.get('id'),
+                                'name': parent_data.get('name'),
+                                'url': None,  # Add if available in your data
+                                'image_path': None  # Add if available in your data
+                            }
+                            parent_studio = find_or_create_parent_studio(parent_info, config['stash_interface'])
+                            if parent_studio and isinstance(parent_studio, dict):
+                                logger(f"👆 Setting parent studio to: {parent_studio.get('name')}", "INFO")
+                                studio['parent_id'] = parent_studio.get('id')
+                        except Exception as e:
+                            logger(f"❌ Error processing parent studio: {str(e)}", "ERROR")
+                
+                # Update URLs if present
+                if studio_data.get('urls'):
+                    for url_data in studio_data['urls']:
+                        if url_data.get('type') == 'HOME' and url_data.get('url'):
+                            if not studio.get('url') or force:
+                                logger(f"🔗 Setting URL to: {url_data['url']}", "INFO")
+                                studio['url'] = url_data['url']
+                                break
+                
+                # Update image if present
+                if studio_data.get('images') and (not studio.get('image_path') or force):
+                    for image_data in studio_data['images']:
+                        if image_data.get('url'):
+                            logger(f"🖼️ Setting image from: {image_data['url']}", "INFO")
+                            studio['image_path'] = image_data['url']
+                            break
+        
+        except Exception as e:
+            logger(f"❌ Error processing match from {endpoint_name}: {str(e)}", "ERROR")
+            continue
+    
+    # Update the studio with new stash IDs if any were added
+    if new_stash_ids != existing_stash_ids:
+        if not dry_run:
+            logger(f"💾 Updating studio {studio['name']} with new stash IDs", "INFO")
+            try:
+                # Create a copy of the studio data without the StashInterface
+                studio_update = {
+                    'id': studio.get('id'),
+                    'name': studio.get('name'),
+                    'url': studio.get('url'),
+                    'parent_id': studio.get('parent_id'),
+                    'image': studio.get('image_path'),  # Changed from image_path to image
+                    'stash_ids': new_stash_ids
+                }
+                
+                # Remove any None values to avoid schema validation errors
+                studio_update = {k: v for k, v in studio_update.items() if v is not None}
+                
+                update_studio(studio_update, studio['id'], dry_run)
+                logger(f"✅ Successfully updated studio {studio['name']}", "INFO")
+            except Exception as e:
+                logger(f"❌ Error updating studio: {str(e)}", "ERROR")
+        else:
+            logger(f"🔍 [DRY RUN] Would update studio {studio['name']} with new stash IDs", "INFO")
+    else:
+        logger(f"ℹ️ No new stash IDs to add for studio {studio['name']}", "INFO")
 
 if __name__ == "__main__":
     main() 
