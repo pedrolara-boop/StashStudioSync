@@ -13,17 +13,19 @@ import sys
 import os
 import importlib.util
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 from stashapi.stashapp import StashInterface
 import stashapi.log as log
 import logging
 from logging.handlers import RotatingFileHandler
 from thefuzz import fuzz
+import argparse
 
 # Import core functionality from the main script
 from StashStudioMetadataMatcher import (
-    logger, update_all_studios, update_single_studio, find_studio_by_name,
-    graphql_request, find_local_studio, get_all_studios,
+    logger, update_single_studio, find_studio_by_name,
+    find_local_studio, get_all_studios,
     search_studio, search_tpdb_site, find_studio, find_tpdb_site,
     find_or_create_parent_studio, add_tpdb_id_to_studio, update_studio,
     update_studio_data
@@ -653,6 +655,181 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
             logger(f"🔍 [DRY RUN] Would update studio {studio['name']} with new data", "INFO")
     else:
         logger(f"ℹ️ No changes needed for studio {studio['name']}", "INFO")
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='Update Stash studios with metadata from ThePornDB and StashDB')
+    parser.add_argument('--limit', type=int, help='Limit the number of studios to process')
+    return parser.parse_args()
+
+def get_all_studios():
+    """Get all studios from Stash"""
+    global config
+    stash = config.get('stash_interface')
+    if not stash:
+        logger("No Stash interface configured", "ERROR")
+        return []
+        
+    try:
+        studios = stash.find_studios()
+        logger(f"Found {len(studios)} studios in Stash", "INFO")
+        return studios
+    except Exception as e:
+        logger(f"Error getting studios: {e}", "ERROR")
+        return []
+
+def update_all_studios(dry_run=False, force=False):
+    """Update all studios with metadata from configured endpoints"""
+    studios = get_all_studios()
+    
+    # Check if we have a limit set
+    args = parse_args()
+    if args.limit and args.limit > 0 and args.limit < len(studios):
+        logger(f"🔢 Limiting to first {args.limit} studios", "INFO")
+        studios = studios[:args.limit]
+    
+    total_studios = len(studios)
+    processed_count = 0
+    updated_count = 0
+    already_complete_count = 0
+    start_time = time.time()
+    
+    mode_str = " (FORCE)" if force else " (DRY RUN)" if dry_run else ""
+    logger(f"🚀 Starting update of {total_studios} studios{mode_str}", "INFO")
+
+    # Create a set to track processed studios to avoid duplicates
+    processed_studios = set()
+
+    for studio in studios:
+        studio_id = studio['id']
+        
+        # Skip if we've already processed this studio
+        if studio_id in processed_studios:
+            logger(f"Skipping already processed studio: {studio['name']} (ID: {studio_id})", "DEBUG")
+            continue
+            
+        # Add to processed set
+        processed_studios.add(studio_id)
+        
+        # Process the studio
+        # Check if the studio already has all IDs and parent
+        has_tpdb_id = any(stash['endpoint'] == 'https://theporndb.net/graphql' for stash in studio.get('stash_ids', []))
+        has_stashdb_id = any(stash['endpoint'] == 'https://stashdb.org/graphql' for stash in studio.get('stash_ids', []))
+        has_parent = studio.get('parent_studio') is not None
+        
+        # If force is enabled, always update the studio
+        # Otherwise, only update if it's missing information
+        if force or not (has_tpdb_id and has_stashdb_id and has_parent):
+            was_updated = wrapped_update_studio_data(studio, dry_run, force)
+            if was_updated:
+                updated_count += 1
+            elif has_tpdb_id and has_stashdb_id and has_parent:
+                already_complete_count += 1
+        else:
+            logger(f"✅ Studio '{studio['name']}' is complete - no updates needed", "INFO")
+            already_complete_count += 1
+
+        # Update progress for each studio
+        processed_count += 1
+        progress_percentage = processed_count / total_studios
+        
+        # Calculate ETA
+        elapsed_time = time.time() - start_time
+        if processed_count > 0:
+            avg_time_per_studio = elapsed_time / processed_count
+            remaining_studios = total_studios - processed_count
+            eta_seconds = avg_time_per_studio * remaining_studios
+            eta_str = str(timedelta(seconds=int(eta_seconds)))
+        else:
+            eta_str = "Unknown"
+        
+        # Log progress
+        logger(progress_percentage, "PROGRESS")
+        
+        # Only log every 10 studios or at the beginning/end to reduce verbosity
+        if processed_count % 10 == 0 or processed_count == 1 or processed_count == total_studios:
+            logger(f"⏳ Processed {processed_count}/{total_studios} studios ({progress_percentage*100:.2f}%) - ETA: {eta_str}", "INFO")
+        else:
+            logger(f"⏳ Processed {processed_count}/{total_studios} studios ({progress_percentage*100:.2f}%) - ETA: {eta_str}", "DEBUG")
+
+    # Log completion
+    total_time = time.time() - start_time
+    logger(f"✅ Completed update of {total_studios} studios in {str(timedelta(seconds=int(total_time)))}", "INFO")
+    logger(f"📊 Summary: {updated_count} studios updated, {already_complete_count} studios already complete", "INFO")
+
+def graphql_request(query, variables, endpoint, api_key, retries=5):
+    """
+    Make a GraphQL request with retries and proper error handling
+    
+    Args:
+        query (str): GraphQL query string
+        variables (dict): Variables for the query
+        endpoint (str): GraphQL endpoint URL
+        api_key (str): API key for authentication
+        retries (int): Number of retry attempts
+        
+    Returns:
+        dict: Response data or None if request failed
+    """
+    headers = {'Content-Type': 'application/json'}
+    if api_key:
+        headers['Apikey'] = api_key
+    
+    # Only modify local Stash endpoint
+    local_endpoint = f"{config['scheme']}://{config['host']}:{config['port']}/graphql"
+    if endpoint == local_endpoint:
+        actual_endpoint = local_endpoint
+        logger(f"Using local endpoint: {actual_endpoint}", "DEBUG")
+    else:
+        actual_endpoint = endpoint
+    
+    # Use a longer timeout for mutation operations (updates, creates)
+    if "mutation" in query.lower():
+        timeout = 60  # 60 seconds for mutations
+    else:
+        timeout = 15  # 15 seconds for queries
+    
+    for attempt in range(retries):
+        try:
+            logger(f"Making GraphQL request to {actual_endpoint}", "DEBUG")
+            # Add timeout to prevent hanging
+            response = requests.post(
+                actual_endpoint,
+                json={'query': query, 'variables': variables},
+                headers=headers,
+                timeout=timeout
+            )
+            
+            # Log response status for debugging
+            logger(f"GraphQL response status: {response.status_code}", "DEBUG")
+            
+            response.raise_for_status()
+            response_json = response.json()
+            
+            if 'errors' in response_json:
+                logger(f"GraphQL request returned errors: {response_json['errors']}", "ERROR")
+                return None
+                
+            return response_json.get('data')
+            
+        except requests.exceptions.RequestException as e:
+            logger(f"GraphQL request failed (attempt {attempt + 1} of {retries}): {e}", "ERROR")
+            
+            # Log more details about the error if available
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_detail = e.response.json()
+                    logger(f"Error details: {error_detail}", "DEBUG")
+                except:
+                    logger(f"Raw error response: {e.response.text}", "DEBUG")
+            
+            if attempt < retries - 1:
+                sleep_time = 2 ** attempt  # Exponential backoff
+                logger(f"Retrying in {sleep_time} seconds...", "DEBUG")
+                time.sleep(sleep_time)
+            else:
+                logger("Max retries reached. Giving up.", "ERROR")
+                raise
 
 if __name__ == "__main__":
     main() 
