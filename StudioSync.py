@@ -453,7 +453,7 @@ def search_all_stashboxes(studio_name):
     """Search for a studio across all configured Stash-box endpoints"""
     global config
     results = []
-    matches_by_endpoint = {}  # Track matches by endpoint for organized reporting
+    matches_by_endpoint = {}
     
     for endpoint in config['stashbox_endpoints']:
         try:
@@ -461,7 +461,7 @@ def search_all_stashboxes(studio_name):
                 continue
                 
             if endpoint['is_tpdb']:
-                # TPDB uses its own REST API search
+                # TPDB search logic (already working correctly)
                 tpdb_results = search_tpdb_site(studio_name, endpoint['api_key'])
                 if tpdb_results:
                     for result in tpdb_results:
@@ -481,7 +481,7 @@ def search_all_stashboxes(studio_name):
                             matches_by_endpoint[endpoint['name']] = []
                         matches_by_endpoint[endpoint['name']].append(match_data)
             else:
-                # Standard Stash-box GraphQL search for all other endpoints
+                # Standard Stash-box GraphQL search
                 try:
                     response = graphql_request(
                         STASHBOX_SEARCH_STUDIO_QUERY, 
@@ -489,6 +489,9 @@ def search_all_stashboxes(studio_name):
                         endpoint['endpoint'], 
                         endpoint['api_key']
                     )
+                    
+                    # Add logging to debug response from each endpoint
+                    logger(f"Response from {endpoint['name']}: {response}", "DEBUG")
                     
                     if response and 'searchStudio' in response:
                         found_results = response['searchStudio']
@@ -500,17 +503,19 @@ def search_all_stashboxes(studio_name):
                                     'endpoint': endpoint['endpoint'],
                                     'endpoint_name': endpoint['name'],
                                     'api_key': endpoint['api_key'],
-                                    'is_tpdb': False,
-                                    'parent': result.get('parent')
+                                    'is_tpdb': False
                                 }
                                 results.append(match_data)
                                 
-                                # Track for reporting
+                                # Track matches by endpoint
                                 if endpoint['name'] not in matches_by_endpoint:
                                     matches_by_endpoint[endpoint['name']] = []
                                 matches_by_endpoint[endpoint['name']].append(match_data)
+                                
+                                # Log each match found
+                                logger(f"Found match in {endpoint['name']}: {result['name']}", "DEBUG")
                 except Exception as e:
-                    logger(f"❌ {endpoint['name']} error: {str(e)}", "ERROR")
+                    logger(f"Error searching {endpoint['name']}: {str(e)}", "ERROR")
                     continue
                 
         except Exception as e:
@@ -626,21 +631,26 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
         endpoint = match['endpoint']
         endpoint_name = match['endpoint_name']
         
-        # Skip StashDB matches as they were already processed
-        if not match['is_tpdb'] and endpoint == 'https://stashdb.org/graphql':
-            continue
-            
         try:
             # Get full studio data
             if match['is_tpdb']:
                 studio_data = find_tpdb_site(match['id'], match['api_key'])
             else:
-                response = graphql_request(STASHBOX_FIND_STUDIO_QUERY, {'id': match['id']}, endpoint, match['api_key'])
+                # Use the same query for all Stash-box endpoints
+                response = graphql_request(
+                    STASHBOX_FIND_STUDIO_QUERY,
+                    {'id': match['id']},
+                    endpoint,
+                    match['api_key']
+                )
                 studio_data = response.get('findStudio') if response else None
             
             if not studio_data:
                 continue
 
+            # Log data received from each endpoint
+            logger(f"Received data from {endpoint_name}: {studio_data}", "DEBUG")
+            
             # Update stash ID
             stash_id = {
                 'endpoint': endpoint,
