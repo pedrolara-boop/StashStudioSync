@@ -1,17 +1,56 @@
+/*
+ * Studio Matcher Button - Standalone Version
+ * 
+ * This is a standalone version of the Studio Matcher Button functionality,
+ * originally dependent on stashUserscriptLibrary7dJx1qP.js.
+ * 
+ * Changes from the original version:
+ * 1. Removed dependency on window.stash7dJx1qP
+ * 2. Extracted necessary utility functions:
+ *    - waitForElementClass: Waits for elements with a specific class to be available in the DOM
+ *    - createElementFromHTML: Creates a DOM element from an HTML string
+ * 3. Uses MutationObserver to detect page changes and studio pages
+ * 4. Added direct path checking for studio pages
+ * 
+ * Functionality:
+ * - Adds a "Match Metadata" button to studio pages
+ * - Button appears in the edit container next to other studio controls
+ * - Executes the StashStudioMetadataMatcher plugin for the current studio
+ * - Shows loading/success/error states with appropriate icons
+ * - Automatically reloads the page after successful matching
+ * 
+ * Requirements:
+ * - Stash instance with StashStudioMetadataMatcher plugin installed
+ * - FontAwesome icons (provided by Stash)
+ * - Access to Stash's GraphQL endpoint
+ * 
+ * Original functions from stashUserscriptLibrary7dJx1qP.js:
+ * - waitForElementClass: Modified to be self-contained
+ * - createElementFromHTML: Kept as is
+ */
+
 // Studio Matcher Button functionality
 (function() {
     'use strict';
 
-    const {
-        stash,
-        Stash,
-        waitForElementId,
-        waitForElementClass,
-        waitForElementByXpath,
-        getElementByXpath,
-        sortElementChildren,
-        createElementFromHTML,
-    } = window.stash7dJx1qP;
+    // Utility functions
+    function waitForElementClass(elementId, callBack, time) {
+        time = (typeof time !== 'undefined') ? time : 100;
+        window.setTimeout(() => {
+            const element = document.getElementsByClassName(elementId);
+            if (element.length > 0) {
+                callBack(elementId, element);
+            } else {
+                waitForElementClass(elementId, callBack);
+            }
+        }, time);
+    }
+
+    function createElementFromHTML(htmlString) {
+        const div = document.createElement('div');
+        div.innerHTML = htmlString.trim();
+        return div.firstChild;
+    }
 
     const btnId = 'match-metadata-btn';
     
@@ -103,8 +142,9 @@
         }
     }
 
-    // Add button when on studio page
-    stash.addEventListener('page:studio:any', function() {
+    function addStudioButton() {
+        if (!window.location.pathname.includes('/studios/')) return;
+        
         waitForElementClass('detail-header', function(className, elements) {
             if (!document.getElementById(btnId)) {
                 const editContainer = elements[0].querySelector('.details-edit');
@@ -127,5 +167,20 @@
                 }
             }
         });
+    }
+
+    // Set up the observer to watch for page changes
+    const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            if (mutation.type === 'childList') {
+                addStudioButton();
+            }
+        }
     });
+
+    // Start observing the document with the configured parameters
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Also try to add the button immediately in case we're already on a studio page
+    addStudioButton();
 })(); 

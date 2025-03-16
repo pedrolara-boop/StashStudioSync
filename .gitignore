@@ -31,4 +31,4 @@ Thumbs.db
 stashPerformerMatchScrape/
 
 # Ignore backup/disabled Python files
-*.py.old 
+*.old 

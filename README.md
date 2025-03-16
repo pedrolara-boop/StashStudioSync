@@ -12,6 +12,7 @@ A Stash plugin for automatically matching and updating studios with metadata fro
 - 🔍 **Fuzzy Matching**: Smart name matching with configurable threshold (default: 95)
 - 📝 **Detailed Logging**: Rotating logs with progress tracking and detailed updates
 - 🔒 **No Configuration Needed**: Uses your existing Stash API keys and endpoint settings
+- 🎯 **One-Click Updates**: Adds a "Match Metadata" button to studio pages for instant matching
 
 ## Installation
 
@@ -56,6 +57,16 @@ A Stash plugin for automatically matching and updating studios with metadata fro
   - python-Levenshtein # Optional but improves thefuzz performance
 
 ## Usage
+
+### Studio Button
+
+The plugin adds a "Match Metadata" button to each studio page:
+- Located in the studio edit toolbar
+- One-click matching with all configured endpoints
+- Automatically creates and links parent studios
+- Shows real-time status (matching, success, error)
+- Reloads the page after successful updates
+- Forces update to get latest metadata
 
 ### Plugin Tasks
 
