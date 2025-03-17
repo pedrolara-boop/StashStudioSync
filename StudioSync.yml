@@ -36,5 +36,7 @@ tasks:
       fuzzy_threshold: 95
 
 ui:
+  requires:
+    - CommunityScriptsUIPlugin 
   javascript:
     - StudioSync.js

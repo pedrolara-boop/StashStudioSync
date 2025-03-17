@@ -107,31 +107,7 @@ def str_to_bool(value):
 
 def setup_rotating_logger(log_path):
     """Set up a rotating logger that will create new files when the size limit is reached"""
-    # Create a rotating file handler
-    max_bytes = 10 * 1024 * 1024  # 10MB per file
-    backup_count = 5  # Keep 5 backup files
-    
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    
-    # Create the rotating handler
-    rotating_handler = RotatingFileHandler(
-        log_path,
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding='utf-8'
-    )
-    
-    # Create formatter
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    rotating_handler.setFormatter(formatter)
-    
-    # Create logger
-    logger = logging.getLogger('StudioSync')
-    logger.setLevel(logging.INFO)
-    logger.addHandler(rotating_handler)
-    
-    return logger
+    # This function is defined but never called in the code
 
 def main():
     """
@@ -819,9 +795,6 @@ def update_all_studios(dry_run=False, force=False):
     mode_str = " (FORCE)" if force else " (DRY RUN)" if dry_run else ""
     logger(f"🚀 Starting update of {total_studios} studios{mode_str}", "INFO")
 
-    # Create a set to track processed studios to avoid duplicates
-    processed_studios = set()
-
     for studio in studios:
         studio_id = studio['id']
         
@@ -830,9 +803,6 @@ def update_all_studios(dry_run=False, force=False):
             logger(f"Skipping already processed studio: {studio['name']} (ID: {studio_id})", "DEBUG")
             continue
             
-        # Add to processed set
-        processed_studios.add(studio_id)
-        
         # Process the studio
         # Check if the studio already has all IDs and parent
         has_tpdb_id = any(stash['endpoint'] == 'https://theporndb.net/graphql' for stash in studio.get('stash_ids', []))
