@@ -15,8 +15,8 @@ A Stash plugin that completes missing studio information by matching and syncing
 1. Clone the repository to your Stash plugins directory:
    ```bash
    cd ~/.stash/plugins  # Adjust path according to your Stash installation
-   git clone https://github.com/pedrolara-boop/StudioSync.git
-   cd StudioSync
+   git clone https://github.com/pedrolara-boop/StashStudioSync.git
+   cd StashStudioSync
    ```
 
 2. Install the Python requirements:
@@ -24,7 +24,7 @@ A Stash plugin that completes missing studio information by matching and syncing
    pip install -r requirements.txt
    ```
 
-3. Reload plugins in Stash (Settings > Plugins > Reload)
+3. Reload plugins in Stash (Settings > Plugins > Reload plugins)
 
 ## Usage
 
