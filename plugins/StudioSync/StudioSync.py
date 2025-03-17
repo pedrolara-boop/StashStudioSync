@@ -13,11 +13,10 @@ License: MIT
 import json
 import sys
 import requests
-from datetime import datetime, timedelta
+from datetime import timedelta
 import time
 from stashapi.stashapp import StashInterface
 import stashapi.log as log
-import logging
 from thefuzz import fuzz
 import argparse
 
@@ -129,7 +128,7 @@ def main():
                 'host': server_connection.get('Host', 'localhost'),
                 'port': server_connection.get('Port', 9999),
                 'api_key': server_connection.get('ApiKey', ''),
-                'fuzzy_threshold': 90,
+                'fuzzy_threshold': 85,
                 'use_fuzzy_matching': True,
                 'stash_interface': stash,
                 'stashbox_endpoints': []
@@ -279,6 +278,29 @@ def search_tpdb_site(term, api_key):
         logger(f"Unexpected error in search_tpdb_site: {e}", "ERROR")
         return []
 
+def analyze_available_fields(data, source):
+    """Analyze and log available fields in the response data"""
+    if not data:
+        return
+        
+    def extract_fields(obj, prefix=''):
+        fields = []
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(value, (dict, list)):
+                    fields.extend(extract_fields(value, f"{prefix}{key}."))
+                else:
+                    fields.append(f"{prefix}{key}")
+        elif isinstance(obj, list) and obj:
+            fields.extend(extract_fields(obj[0], prefix))
+        return fields
+
+    fields = extract_fields(data)
+    logger(f"\n🔎 Available fields from {source}:", "INFO")
+    logger("Fields we could potentially use:", "INFO")
+    for field in sorted(fields):
+        logger(f"  - {field}", "INFO")
+
 def find_tpdb_site(site_id, api_key):
     """Find a site on ThePornDB using the REST API"""
     logger(f"Finding site with ID {site_id} on ThePornDB REST API", "DEBUG")
@@ -297,6 +319,14 @@ def find_tpdb_site(site_id, api_key):
         response = requests.get(url, headers=headers, params=params, timeout=10)
         response.raise_for_status()
         response_data = response.json()
+        
+        # Print complete raw data for analysis
+        logger("🔍 Complete ThePornDB Response Data:", "INFO")
+        logger(json.dumps(response_data, indent=2), "INFO")
+        
+        # Analyze available fields
+        if 'data' in response_data:
+            analyze_available_fields(response_data['data'], "ThePornDB")
         
         # The API returns data wrapped in a 'data' object
         if 'data' in response_data:
@@ -534,7 +564,7 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     
     # Initialize variables to track all changes
     all_stash_ids = studio.get('stash_ids', []).copy()
-    best_image = None  # Changed: Initialize as None instead of getting existing image_path
+    best_image = None
     best_url = studio.get('url')
     best_parent_id = studio.get('parent_id')
     has_changes = False
@@ -559,7 +589,14 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                 if response and 'findStudio' in response:
                     studio_data = response['findStudio']
                     
-                    if studio_data and studio_data.get('images') and (not best_image or force):
+                    # Print complete StashDB data for analysis
+                    logger(f"🔍 Complete StashDB Data for {studio_name}:", "INFO")
+                    logger(json.dumps(studio_data, indent=2), "INFO")
+                    
+                    # Analyze available fields
+                    analyze_available_fields(studio_data, "StashDB")
+                    
+                    if studio_data and studio_data.get('images'):
                         # Try to find logo or poster in StashDB images
                         logo_image = next((img['url'] for img in studio_data['images'] if 'logo' in img.get('url', '').lower()), None)
                         poster_image = next((img['url'] for img in studio_data['images'] if 'poster' in img.get('url', '').lower()), None)
