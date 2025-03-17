@@ -236,8 +236,9 @@ def search_tpdb_site(term, api_key):
         logger(f"Making request to {url} with query: {term}", "DEBUG")
         response = requests.get(url, headers=headers, params=params, timeout=10)
         
-        # Log the actual URL being called (for debugging)
-        logger(f"Full URL with params: {response.url}", "DEBUG")
+        # Only log if there's an error:
+        if response.status_code != 200:
+            logger(f"Failed request to: {response.url}", "DEBUG")
         
         response.raise_for_status()
         data = response.json()
@@ -303,13 +304,10 @@ def find_tpdb_site(site_id, api_key):
         response.raise_for_status()
         response_data = response.json()
         
-        # Log the raw response for debugging
-        logger(f"Raw ThePornDB response: {response_data}", "DEBUG")
-        
         # The API returns data wrapped in a 'data' object
         if 'data' in response_data:
             site = response_data['data']
-            logger(f"Retrieved raw site data from ThePornDB REST API: {site}", "DEBUG")
+            logger(f"Retrieved ThePornDB data for {site.get('name')}", "DEBUG")
             
             # Convert to the same format as our GraphQL results
             parent = None
@@ -349,7 +347,6 @@ def find_tpdb_site(site_id, api_key):
                         'url': site.get(image_field)
                     })
             
-            logger(f"Processed site data from ThePornDB REST API: {result}", "DEBUG")
             return result
         
         logger(f"No data found in ThePornDB REST API response for site ID {site_id}", "ERROR")
@@ -836,13 +833,10 @@ def update_all_studios(dry_run=False, force=False):
             eta_str = "Unknown"
         
         # Log progress
-        logger(progress_percentage, "PROGRESS")
-        
-        # Only log every 10 studios or at the beginning/end to reduce verbosity
-        if processed_count % 10 == 0 or processed_count == 1 or processed_count == total_studios:
-            logger(f"⏳ Processed {processed_count}/{total_studios} studios ({progress_percentage*100:.2f}%) - ETA: {eta_str}", "INFO")
+        if processed_count % 50 == 0 or processed_count == 1 or processed_count == total_studios:
+            logger(f"⏳ Progress: {processed_count}/{total_studios} ({progress_percentage*100:.1f}%) - ETA: {eta_str}", "INFO")
         else:
-            logger(f"⏳ Processed {processed_count}/{total_studios} studios ({progress_percentage*100:.2f}%) - ETA: {eta_str}", "DEBUG")
+            logger(progress_percentage, "PROGRESS")
 
     # Log completion
     total_time = time.time() - start_time
@@ -892,8 +886,9 @@ def graphql_request(query, variables, endpoint, api_key, retries=5):
                 timeout=timeout
             )
             
-            # Log response status for debugging
-            logger(f"GraphQL response status: {response.status_code}", "DEBUG")
+            # Only log if there's an error:
+            if response.status_code != 200:
+                logger(f"Failed request to: {response.url}", "DEBUG")
             
             response.raise_for_status()
             response_json = response.json()
