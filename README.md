@@ -6,9 +6,11 @@ A Stash plugin that completes missing studio information by matching and syncing
 
 - 🔄 **Multi-Endpoint Sync**: Works with ThePornDB, StashDB, and other Stash-box endpoints
 - 👨‍👦 **Parent Studio Handling**: Automatically creates and links parent studios
-- 🖼️ **Image Updates**: Automatically adds missing logos images for studios
+- 🖼️ **Image Updates**: Automatically adds missing logos and images for studios
 - 🔍 **Intelligent Matching**: Fuzzy name matching for better results
 - 🎯 **Flexible Updates**: Both batch processing and single studio updates
+- ⚡ **Smart Processing**: Only updates studios missing information (IDs, images, parent studios)
+- 🔒 **Lock Protection**: Prevents multiple instances from running simultaneously
 
 ## Installation
 
@@ -39,9 +41,9 @@ A Stash plugin that completes missing studio information by matching and syncing
 ![Plugin Tasks](screenshot.png)
 
 Available in Settings > Tasks:
-1. **Match Studios**: Update all studios missing information
+1. **Match Studios**: Update studios missing information (IDs, images, parent studios)
 2. **Match Studios (Dry Run)**: Preview changes without applying them
-3. **Force Update Studios**: Update all studios with latest data
+3. **Force Update Studios**: Update all studios with latest data (overrides existing data)
 4. **Force Update Studios (Dry Run)**: Preview all potential updates
 
 ## Requirements
