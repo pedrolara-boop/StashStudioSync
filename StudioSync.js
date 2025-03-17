@@ -1,35 +1,4 @@
-/*
- * Studio Matcher Button - Standalone Version
- * 
- * This is a standalone version of the Studio Matcher Button functionality,
- * originally dependent on stashUserscriptLibrary7dJx1qP.js.
- * 
- * Changes from the original version:
- * 1. Removed dependency on window.stash7dJx1qP
- * 2. Extracted necessary utility functions:
- *    - waitForElementClass: Waits for elements with a specific class to be available in the DOM
- *    - createElementFromHTML: Creates a DOM element from an HTML string
- * 3. Uses MutationObserver to detect page changes and studio pages
- * 4. Added direct path checking for studio pages
- * 
- * Functionality:
- * - Adds a "Match Metadata" button to studio pages
- * - Button appears in the edit container next to other studio controls
- * - Executes the StudioSync plugin for the current studio
- * - Shows loading/success/error states with appropriate icons
- * - Automatically reloads the page after successful matching
- * 
- * Requirements:
- * - Stash instance with StudioSync plugin installed
- * - FontAwesome icons (provided by Stash)
- * - Access to Stash's GraphQL endpoint
- * 
- * Original functions from stashUserscriptLibrary7dJx1qP.js:
- * - waitForElementClass: Modified to be self-contained
- * - createElementFromHTML: Kept as is
- */
-
-// Studio Matcher Button functionality
+// StudioSync Button functionality
 (function() {
     'use strict';
 
@@ -120,10 +89,10 @@
             // Log success message
             console.log('Studio match completed successfully');
             
-            // Wait 3 seconds to show success state and ensure processing is complete, then reload
+            // Wait 5 seconds to show success state and ensure processing is complete, then reload
             setTimeout(() => {
                 window.location.reload();
-            }, 3000);
+            }, 5000);
 
         } catch (error) {
             console.error('Error matching studio:', error);
