@@ -12,11 +12,13 @@ A Stash plugin that completes missing studio information by matching and syncing
 
 ## Installation
 
-1. Clone the repository to your Stash plugins directory:
+1. Clone the repository and copy the plugin to your Stash plugins directory:
    ```bash
-   cd ~/.stash/plugins  # Adjust path according to your Stash installation
-   git clone https://github.com/pedrolara-boop/StashStudioSync.git
-   cd StashStudioSync
+   # First clone the repository
+   git clone https://github.com/pedrolara-boop/boop-stash.git
+   
+   # Copy the StudioSync plugin folder to your Stash plugins directory
+   cp -r boop-stash/plugins/StudioSync ~/.stash/plugins/
    ```
 
 2. Install the Python requirements:
@@ -49,8 +51,8 @@ Available in Settings > Tasks:
 
 ## Support
 
-- [Report Issues](https://github.com/pedrolara-boop/StudioSync/issues)
-- [GitHub Repository](https://github.com/pedrolara-boop/StudioSync)
+- [Report Issues](https://github.com/pedrolara-boop/boop-stash/issues)
+- [GitHub Repository](https://github.com/pedrolara-boop/boop-stash)
 
 ## License
 
