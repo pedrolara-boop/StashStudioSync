@@ -2,7 +2,9 @@
 """
 StudioSync
 
-A plugin for matching studios in Stashapp database with ThePornDB and StashDB.
+A plugin for matching and syncing studios in Stash with ThePornDB and StashDB.
+Automatically completes missing studio information including IDs, URLs, images,
+and parent relationships.
 
 GitHub: https://github.com/pedrolara-boop/StudioSync
 License: MIT
@@ -10,15 +12,12 @@ License: MIT
 
 import json
 import sys
-import os
-import importlib.util
 import requests
 from datetime import datetime, timedelta
 import time
 from stashapi.stashapp import StashInterface
 import stashapi.log as log
 import logging
-from logging.handlers import RotatingFileHandler
 from thefuzz import fuzz
 import argparse
 
@@ -105,10 +104,6 @@ def str_to_bool(value):
         return value
     return str(value).lower() in ('true', '1', 'yes', 'on')
 
-def setup_rotating_logger(log_path):
-    """Set up a rotating logger that will create new files when the size limit is reached"""
-    # This function is defined but never called in the code
-
 def main():
     """
     Main function for the plugin version.
@@ -134,7 +129,6 @@ def main():
                 'host': server_connection.get('Host', 'localhost'),
                 'port': server_connection.get('Port', 9999),
                 'api_key': server_connection.get('ApiKey', ''),
-                'log_file': 'studio_metadata_matcher.log',
                 'fuzzy_threshold': 90,
                 'use_fuzzy_matching': True,
                 'stash_interface': stash,
@@ -534,7 +528,7 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     # Check if we've already processed this studio in this session
     if studio_id in processed_studios:
         logger(f"⚠️ Skipping already processed studio: {studio_name}", "DEBUG")
-        return
+        return False
         
     processed_studios.add(studio_id)  # Mark this studio as processed
     
@@ -555,7 +549,7 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     
     if not matches:
         logger(f"❌ No matches found for: {studio_name}", "INFO")
-        return
+        return False
     
     # First pass: Process StashDB matches to get priority images
     for match in matches:
@@ -743,13 +737,17 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                 logger(summary, "INFO")
                 
                 update_studio(studio_update, studio_id, dry_run)
+                return True
             except Exception as e:
                 logger(f"❌ Update failed for {studio_name}: {str(e)}", "ERROR")
+                return False
         else:
             unique_changes = list(dict.fromkeys(changes_summary))  # Remove duplicates while preserving order
             logger(f"🔍 [DRY RUN] Would update {studio_name} with: {', '.join(unique_changes)}", "INFO")
+            return True
     else:
         logger(f"ℹ️ No changes needed for {studio_name}", "DEBUG")
+        return False
 
 def parse_args():
     """Parse command line arguments"""
@@ -894,7 +892,9 @@ def graphql_request(query, variables, endpoint, api_key, retries=5):
             response_json = response.json()
             
             if 'errors' in response_json:
-                logger(f"GraphQL request returned errors: {response_json['errors']}", "ERROR")
+                # Add more detail to the error message
+                error_msg = response_json['errors'][0].get('message', 'Unknown GraphQL error')
+                logger(f"GraphQL request returned error: {error_msg}", "ERROR")
                 return None
                 
             return response_json.get('data')

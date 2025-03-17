@@ -1,6 +1,6 @@
 # StudioSync Plugin
 
-A Stash plugin that completes missing studio information by matching and syncing with ThePornDB, StashDB, and other Stash-box endpoints. Automatically fills in missing IDs, URLs, images, and parent relationships. With both batch match options and single match with UI button.
+A Stash plugin that completes missing studio information by matching and syncing with ThePornDB, StashDB, and other Stash-box endpoints. Update a single studio using the UI button or batch match your entire collection.
 
 ## Features
 
