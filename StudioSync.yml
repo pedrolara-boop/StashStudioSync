@@ -1,5 +1,5 @@
 name: StudioSync
-description: Match and update studios with metadata from all configured Stash-box endpoints (ThePornDB, StashDB, and any additional endpoints). Features include automatic parent studio creation and linking, URL and image updates, and intelligent data merging from multiple sources.
+description: Complete missing studio information by matching and syncing with ThePornDB, StashDB, and other Stash-box endpoints. Automatically fills in missing IDs, URLs, images, and parent relationships. Supports both batch processing for bulk updates and a user-friendly UI button for manual matching.
 version: 1.0
 url: https://github.com/pedrolara-boop/StudioSync
 exec:
