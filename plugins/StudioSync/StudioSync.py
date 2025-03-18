@@ -362,38 +362,36 @@ def analyze_available_fields(data, source):
         logger(f"  - {field}", "INFO")
 
 def find_tpdb_site(site_id, api_key):
-    """Find a site on ThePornDB using the REST API"""
-    logger(f"Finding site with ID {site_id} on ThePornDB REST API", "DEBUG")
-    
-    url = f"{TPDB_REST_API_URL}/sites/{site_id}"
-    headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Accept': 'application/json'
-    }
-    params = {
-        'include': 'parent,network'  # Include parent and network data in response
-    }
-    
+    """Fetch studio details from ThePornDB using their REST API"""
     try:
-        # Add timeout to prevent hanging
-        response = requests.get(url, headers=headers, params=params, timeout=10)
+        url = f"{TPDB_REST_API_URL}/sites/{site_id}"
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Accept': 'application/json'
+        }
+        
+        response = requests.get(url, headers=headers)
         response.raise_for_status()
-        response_data = response.json()
+        data = response.json()
         
-        # Only log essential data for debugging
-        if 'data' in response_data:
-            data = response_data['data']
-            logger(f"Found TPDB site: {data.get('name', 'Unknown')} (ID: {data.get('id', 'Unknown')})", "DEBUG")
-            
-        return response_data.get('data')
-        
-    except requests.exceptions.RequestException as e:
-        logger(f"ThePornDB REST API request failed: {e}", "ERROR")
-        if hasattr(e, 'response') and e.response is not None and hasattr(e.response, 'text'):
-            logger(f"Error response: {e.response.text}", "DEBUG")
+        # Add validation for required fields
+        if data and 'data' in data:
+            site_data = data['data']
+            if not site_data.get('uuid'):
+                logger(f"No UUID found in TPDB response for site {site_id}", "ERROR")
+                return None
+                
+            result = {
+                'id': site_data['uuid'],
+                'name': site_data.get('name'),
+                'url': site_data.get('url'),
+                'images': site_data.get('images', []),
+                'parent': site_data.get('parent')
+            }
+            return result
         return None
     except Exception as e:
-        logger(f"Unexpected error in find_tpdb_site: {e}", "ERROR")
+        logger(f"Error in find_tpdb_site: {str(e)}", "ERROR")
         return None
 
 def fuzzy_match_studio_name(name, candidates, threshold=85):
@@ -456,8 +454,10 @@ def fuzzy_match_studio_name(name, candidates, threshold=85):
         return None, 0, []
 
 def search_all_stashboxes(studio_name):
-    """Search for a studio across all configured Stash-box endpoints"""
-    global config
+    if not config.get('stashbox_endpoints'):
+        logger("No endpoints configured", "ERROR")
+        return []
+        
     results = []
     matches_by_endpoint = {}
     
@@ -1265,72 +1265,62 @@ def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
         return None
 
 def add_tpdb_id_to_studio(studio_id, tpdb_id, dry_run=False):
-    """
-    Add a ThePornDB ID to a studio that already exists
+    """Add a ThePornDB ID to a studio that already exists
     
     Args:
-        studio_id (str): The ID of the studio to update
-        tpdb_id (str): The ThePornDB ID to add
-        dry_run (bool): If True, don't make any changes
-        
-    Returns:
-        bool: True if successful, False otherwise
+        studio_id (int): The Stash studio ID to update
+        tpdb_id (str): The ThePornDB UUID to add
+        dry_run (bool): If True, only log what would be done without making changes
     """
-    logger(f"Adding ThePornDB ID {tpdb_id} to studio {studio_id}", "DEBUG")
-    
-    try:
-        # Get StashInterface from config
-        stash = config.get('stash_interface')
-        if not stash:
-            logger("No Stash interface configured", "ERROR")
-            return False
+    global config
+    stash = config.get('stash_interface')
+    if not stash:
+        logger("No Stash interface configured", "ERROR")
+        return False
         
-        # Get current studio data
+    try:
+        # Get the studio first
         studio = stash.find_studio(studio_id)
         if not studio:
-            logger(f"Could not find studio with ID {studio_id}", "ERROR")
+            logger(f"Studio {studio_id} not found", "ERROR")
             return False
+            
+        logger(f"Adding ThePornDB UUID {tpdb_id} to studio {studio_id}", "DEBUG")
         
-        # Get existing stash_ids
-        existing_stash_ids = studio.get('stash_ids', []).copy()
+        # Get existing stash IDs
+        existing_stash_ids = studio.get('stash_ids', [])
         
-        # Check if the ThePornDB ID already exists
+        # Check if the ThePornDB UUID already exists
         if any(s.get('endpoint') == 'https://theporndb.net/graphql' and 
                s.get('stash_id') == tpdb_id for s in existing_stash_ids):
-            logger(f"Studio {studio['name']} already has ThePornDB ID {tpdb_id}", "DEBUG")
+            logger(f"Studio {studio['name']} already has ThePornDB UUID {tpdb_id}", "DEBUG")
             return True
+            
+        # Add the ThePornDB UUID
+        new_stash_id = {
+            'endpoint': 'https://theporndb.net/graphql',
+            'stash_id': tpdb_id  # Using UUID from TPDB
+        }
         
-        # Add the ThePornDB ID
-        existing_stash_ids.append({
-            'stash_id': tpdb_id,
-            'endpoint': 'https://theporndb.net/graphql'
-        })
+        # Remove any existing TPDB ID
+        existing_stash_ids = [s for s in existing_stash_ids if s.get('endpoint') != 'https://theporndb.net/graphql']
+        existing_stash_ids.append(new_stash_id)
         
         if dry_run:
-            logger(f"🔄 DRY RUN: Would add ThePornDB ID {tpdb_id} to studio {studio['name']} (ID: {studio_id})", "INFO")
+            logger(f"🔄 DRY RUN: Would add ThePornDB UUID {tpdb_id} to studio {studio['name']} (ID: {studio_id})", "INFO")
+            return True
+            
+        # Update the studio
+        studio['stash_ids'] = existing_stash_ids
+        if stash.update_studio(studio):
+            logger(f"🔗 Added ThePornDB UUID {tpdb_id} to studio {studio['name']} (ID: {studio_id})", "INFO")
             return True
         else:
-            try:
-                # Update the studio with new stash_ids
-                update_data = {
-                    'id': studio_id,
-                    'stash_ids': existing_stash_ids
-                }
-                
-                result = stash.update_studio(update_data)
-                if result:
-                    logger(f"🔗 Added ThePornDB ID {tpdb_id} to studio {studio['name']} (ID: {studio_id})", "INFO")
-                    return True
-                else:
-                    logger(f"Failed to update studio {studio['name']} with ThePornDB ID", "ERROR")
-                    return False
-                    
-            except Exception as e:
-                logger(f"Error adding ThePornDB ID to studio: {e}", "ERROR")
-                return False
-                
+            logger(f"Failed to update studio {studio['name']} with ThePornDB UUID", "ERROR")
+            return False
+            
     except Exception as e:
-        logger(f"Error in add_tpdb_id_to_studio: {e}", "ERROR")
+        logger(f"Error adding ThePornDB UUID to studio: {e}", "ERROR")
         return False
 
 def update_studio(studio_data, local_id, dry_run=False):
@@ -1376,6 +1366,11 @@ def update_studio(studio_data, local_id, dry_run=False):
 
 def process_studio_with_matches(studio, matches, dry_run=False, force=False):
     """Process a studio with pre-fetched matches"""
+    # Add validation at the start
+    if not matches:
+        logger(f"No matches provided for studio {studio['name']}", "ERROR")
+        return False
+        
     studio_id = studio.get('id')
     studio_name = studio['name']
     
@@ -1393,67 +1388,114 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
     if best_url:
         seen_urls.add(best_url)
 
-    # First pass: Process StashDB matches to get priority images
+    # Process all matches, including TPDB
     for match in matches:
-        if match.get('is_tpdb'):
-            continue
-            
         try:
-            studio_data = find_stashbox_studio(match['id'], match['endpoint'], match['api_key'])
-            
-            if studio_data:
-                # Process images from StashDB
-                if studio_data.get('images'):
-                    # Try to find logo or poster in StashDB images
-                    logo_image = next((img['url'] for img in studio_data['images'] if 'logo' in img.get('url', '').lower()), None)
-                    poster_image = next((img['url'] for img in studio_data['images'] if 'poster' in img.get('url', '').lower()), None)
+            if match.get('is_tpdb'):
+                # Process TPDB match
+                studio_data = find_tpdb_site(match['id'], match['api_key'])
+                if studio_data:
+                    # Add TPDB ID
+                    stash_id = {
+                        'endpoint': match['endpoint'],
+                        'stash_id': studio_data['id']  # This is the UUID
+                    }
+                    # Remove existing TPDB ID if it exists
+                    all_stash_ids = [sid for sid in all_stash_ids if sid['endpoint'] != match['endpoint']]
+                    all_stash_ids.append(stash_id)
+                    has_changes = True
+                    changes_summary.append("ThePornDB ID")
                     
-                    if logo_image:
-                        best_image = logo_image
-                        has_changes = True
-                        changes_summary.append("StashDB logo image")
-                    elif poster_image:
-                        best_image = poster_image
-                        has_changes = True
-                        changes_summary.append("StashDB poster image")
-                    elif studio_data['images']:
+                    # Process images from TPDB
+                    if studio_data.get('images') and (not best_image or force):
                         best_image = studio_data['images'][0].get('url')
                         has_changes = True
-                        changes_summary.append("StashDB image")
-                
-                # Process URLs from StashDB
-                if studio_data.get('urls'):
-                    for url_data in studio_data['urls']:
-                        if url_data.get('type') == 'HOME' and url_data.get('url'):
-                            url = url_data['url']
-                            if url not in seen_urls:
-                                if not best_url or force:
-                                    best_url = url
+                        changes_summary.append("ThePornDB image")
+                    
+                    # Process parent studio
+                    if studio_data.get('parent') and (not best_parent_id or force):
+                        parent_data = studio_data['parent']
+                        if not dry_run:
+                            try:
+                                parent_info = {
+                                    'id': parent_data.get('id'),
+                                    'name': parent_data.get('name'),
+                                    'url': None,
+                                    'image_path': None
+                                }
+                                parent_studio_id = find_or_create_parent_studio(parent_info, match['endpoint'], dry_run)
+                                if parent_studio_id:
+                                    best_parent_id = parent_studio_id
                                     has_changes = True
-                                    changes_summary.append("StashDB URL")
-                                seen_urls.add(url)
-                                break
-                
-                # Process parent studio
-                if studio_data.get('parent') and (not best_parent_id or force):
-                    parent_data = studio_data['parent']
-                    if not dry_run:
-                        try:
-                            parent_info = {
-                                'id': parent_data.get('id'),
-                                'name': parent_data.get('name'),
-                                'url': None,
-                                'image_path': None
-                            }
-                            parent_studio_id = find_or_create_parent_studio(parent_info, match['endpoint'], dry_run)
-                            if parent_studio_id:
-                                best_parent_id = parent_studio_id
-                                has_changes = True
-                                changes_summary.append(f"Parent from {studio_name}")
-                        except Exception as e:
-                            logger(f"❌ Parent studio error for {studio_name}: {str(e)}", "ERROR")
+                                    changes_summary.append("Parent from ThePornDB")
+                            except Exception as e:
+                                logger(f"❌ Parent studio error for {studio_name}: {str(e)}", "ERROR")
+            else:
+                # Process StashDB match (existing code)
+                studio_data = find_stashbox_studio(match['id'], match['endpoint'], match['api_key'])
+                if studio_data:
+                    # Add StashDB ID
+                    stash_id = {
+                        'endpoint': match['endpoint'],
+                        'stash_id': studio_data['id']
+                    }
+                    # Remove existing ID for this endpoint if it exists
+                    all_stash_ids = [sid for sid in all_stash_ids if sid['endpoint'] != match['endpoint']]
+                    all_stash_ids.append(stash_id)
+                    has_changes = True
+                    changes_summary.append(f"{match['endpoint_name']} ID")
+                    
+                    # Process images from StashDB
+                    if studio_data.get('images'):
+                        logo_image = next((img['url'] for img in studio_data['images'] if 'logo' in img.get('url', '').lower()), None)
+                        poster_image = next((img['url'] for img in studio_data['images'] if 'poster' in img.get('url', '').lower()), None)
+                        
+                        if logo_image and (not best_image or force):
+                            best_image = logo_image
+                            has_changes = True
+                            changes_summary.append(f"{match['endpoint_name']} logo image")
+                        elif poster_image and (not best_image or force):
+                            best_image = poster_image
+                            has_changes = True
+                            changes_summary.append(f"{match['endpoint_name']} poster image")
+                        elif studio_data['images'] and (not best_image or force):
+                            best_image = studio_data['images'][0].get('url')
+                            has_changes = True
+                            changes_summary.append(f"{match['endpoint_name']} image")
+                    
+                    # Process URLs
+                    if studio_data.get('urls'):
+                        for url_data in studio_data['urls']:
+                            if url_data.get('type') == 'HOME' and url_data.get('url'):
+                                url = url_data['url']
+                                if url not in seen_urls:
+                                    if not best_url or force:
+                                        best_url = url
+                                        has_changes = True
+                                        changes_summary.append(f"{match['endpoint_name']} URL")
+                                    seen_urls.add(url)
+                                    break
+                    
+                    # Process parent studio
+                    if studio_data.get('parent') and (not best_parent_id or force):
+                        parent_data = studio_data['parent']
+                        if not dry_run:
+                            try:
+                                parent_info = {
+                                    'id': parent_data.get('id'),
+                                    'name': parent_data.get('name'),
+                                    'url': None,
+                                    'image_path': None
+                                }
+                                parent_studio_id = find_or_create_parent_studio(parent_info, match['endpoint'], dry_run)
+                                if parent_studio_id:
+                                    best_parent_id = parent_studio_id
+                                    has_changes = True
+                                    changes_summary.append(f"Parent from {match['endpoint_name']}")
+                            except Exception as e:
+                                logger(f"❌ Parent studio error for {studio_name}: {str(e)}", "ERROR")
         except Exception as e:
-            logger(f"❌ StashDB error for {studio_name}: {str(e)}", "ERROR")
+            logger(f"❌ Error processing match from {match.get('endpoint_name', 'Unknown')}: {str(e)}", "ERROR")
             continue
 
     # Perform single update with all collected changes
