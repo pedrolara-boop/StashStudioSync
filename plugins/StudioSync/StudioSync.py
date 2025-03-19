@@ -276,20 +276,17 @@ def search_tpdb_site(term, api_key):
     }
     params = {
         'q': term,
-        'limit': 100,  # Get more results to improve matching chances
-        'sort': 'name',  # Sort by name for better matching
-        'status': 'active',  # Only get active sites
-        'include': 'parent,network',  # Include parent and network data in response
-        'order': 'desc',  # Most relevant first
-        'date_updated': 'last_month'  # Prioritize recently updated sites
+        'limit': 100,
+        'sort': 'name',
+        'status': 'active',
+        'include': 'parent,network',
+        'order': 'desc'
     }
     
     try:
-        # Add timeout to prevent hanging
         logger(f"Making request to {url} with query: {term}", "DEBUG")
         response = requests.get(url, headers=headers, params=params, timeout=10)
         
-        # Only log if there's an error:
         if response.status_code != 200:
             logger(f"Failed request to: {response.url}", "DEBUG")
         
@@ -300,26 +297,21 @@ def search_tpdb_site(term, api_key):
             sites = data['data']
             logger(f"Found {len(sites)} results for '{term}' on ThePornDB REST API", "DEBUG")
             
-            # Convert to the same format as our GraphQL results
             results = []
             for site in sites:
                 # Only include if we have a valid UUID
                 if site.get('uuid'):
-                    # Include parent and network info if available
+                    # Handle parent/network relationships
                     parent_info = None
                     if site.get('parent') and site['parent'].get('uuid'):
                         parent_info = {
-                            'id': str(site['parent']['uuid']),
+                            'id': site['parent']['uuid'],  # Use parent UUID
                             'name': site['parent'].get('name')
                         }
-                    elif site.get('network') and site['network'].get('uuid'):
-                        parent_info = {
-                            'id': str(site['network']['uuid']),
-                            'name': site['network'].get('name')
-                        }
+                    # Don't use network as parent - networks are separate entities
                     
                     results.append({
-                        'id': str(site.get('uuid')),
+                        'id': site['uuid'],  # Use UUID consistently
                         'name': site.get('name'),
                         'parent': parent_info,
                         'date_updated': site.get('updated_at')
@@ -330,7 +322,6 @@ def search_tpdb_site(term, api_key):
             return []
     except requests.exceptions.RequestException as e:
         logger(f"ThePornDB REST API request failed: {e}", "ERROR")
-        # Log more details about the error
         if hasattr(e, 'response') and e.response is not None and hasattr(e.response, 'text'):
             logger(f"Error response: {e.response.text}", "DEBUG")
         return []
@@ -361,34 +352,55 @@ def analyze_available_fields(data, source):
     for field in sorted(fields):
         logger(f"  - {field}", "INFO")
 
-def find_tpdb_site(site_id, api_key):
+def find_tpdb_site(site_uuid, api_key):
     """Fetch studio details from ThePornDB using their REST API"""
     try:
-        url = f"{TPDB_REST_API_URL}/sites/{site_id}"
+        url = f"{TPDB_REST_API_URL}/sites/{site_uuid}"
         headers = {
             'Authorization': f'Bearer {api_key}',
             'Accept': 'application/json'
         }
         
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
         
-        # Add validation for required fields
+        # Log the response for debugging
+        logger(f"TPDB REST API response for {site_uuid}: {data}", "DEBUG")
+        
         if data and 'data' in data:
             site_data = data['data']
             if not site_data.get('uuid'):
-                logger(f"No UUID found in TPDB response for site {site_id}", "ERROR")
+                logger(f"No UUID found in TPDB response for site {site_uuid}", "ERROR")
                 return None
-                
+            
+            # Handle parent relationship
+            parent_data = None
+            if site_data.get('parent') and site_data['parent'].get('uuid'):
+                parent_data = {
+                    'id': site_data['parent']['uuid'],  # Use parent UUID
+                    'name': site_data['parent'].get('name')
+                }
+            
+            # Construct result using only UUID-based identifiers
             result = {
                 'id': site_data['uuid'],
                 'name': site_data.get('name'),
                 'url': site_data.get('url'),
-                'images': site_data.get('images', []),
-                'parent': site_data.get('parent')
+                'images': [],
+                'parent': parent_data
             }
+            
+            # Add images if available
+            if site_data.get('logo'):
+                result['images'].append({'url': site_data['logo']})
+            if site_data.get('poster'):
+                result['images'].append({'url': site_data['poster']})
+            
+            logger(f"Returning site data for {site_data.get('name')}: {result}", "DEBUG")
             return result
+            
+        logger(f"No valid data found in TPDB response for {site_uuid}", "DEBUG")
         return None
     except Exception as e:
         logger(f"Error in find_tpdb_site: {str(e)}", "ERROR")
@@ -405,9 +417,33 @@ def fuzzy_match_studio_name(name, candidates, threshold=85):
     overall_best_match = None
     overall_best_score = 0
     
+    # Normalize the input name
+    name_lower = name.lower()
+    name_no_space = name_lower.replace(" ", "")
+    
     for candidate in candidates:
         endpoint_name = candidate.get('endpoint_name', 'Unknown')
-        score = fuzz.token_sort_ratio(name.lower(), candidate['name'].lower())
+        candidate_name = candidate['name'].lower()
+        candidate_no_space = candidate_name.replace(" ", "")
+        
+        # Calculate multiple similarity scores
+        scores = [
+            fuzz.ratio(name_lower, candidate_name),  # Exact character match
+            fuzz.partial_ratio(name_lower, candidate_name),  # Best partial match
+            fuzz.token_sort_ratio(name_lower, candidate_name),  # Token-based match
+            fuzz.token_set_ratio(name_lower, candidate_name),  # Set-based match
+            # Special handling for space vs no-space cases
+            fuzz.ratio(name_no_space, candidate_no_space),
+            fuzz.ratio(name_no_space, candidate_name),
+            fuzz.ratio(name_lower, candidate_no_space)
+        ]
+        
+        # Take the highest score
+        score = max(scores)
+        
+        # Special case: If one string is contained within the other (after normalization)
+        if name_no_space in candidate_no_space or candidate_no_space in name_no_space:
+            score = max(score, 95)  # Boost score for contained matches
         
         if endpoint_name not in matches_by_endpoint:
             matches_by_endpoint[endpoint_name] = []
@@ -1104,18 +1140,18 @@ def search_parent_studio_all_endpoints(parent_name, parent_id, original_endpoint
 
 def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
     """
-    Enhanced version that searches across all endpoints
+    Enhanced version that searches across all endpoints and uses UUIDs consistently
     """
     if not parent_data:
         return None
     
-    parent_id = parent_data.get('id')
+    parent_uuid = parent_data.get('id')  # This should be a UUID
     parent_name = parent_data.get('name')
     
-    if not parent_id or not parent_name:
+    if not parent_uuid or not parent_name:
         return None
     
-    logger(f"🔍 Searching for parent studio: {parent_name}", "INFO")
+    logger(f"🔍 Searching for parent studio: {parent_name} (UUID: {parent_uuid})", "INFO")
     
     try:
         stash = config.get('stash_interface')
@@ -1129,28 +1165,32 @@ def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
             studios = []
         
         # Search across all endpoints
-        parent_matches = search_parent_studio_all_endpoints(parent_name, parent_id, original_endpoint)
+        parent_matches = search_parent_studio_all_endpoints(parent_name, parent_uuid, original_endpoint)
         
-        # First, try to find existing studio by any of the matched IDs
+        # First, try to find existing studio by UUID
         for studio in studios:
+            # Skip if this studio has a parent (to prevent child studios from being set as parents)
+            if studio.get('parent_studio'):
+                continue
+                
             if studio.get('stash_ids'):
                 for match in parent_matches:
                     if any(sid['endpoint'] == match['endpoint'] and 
-                          sid['stash_id'] == match['id'] 
+                          sid['stash_id'] == match['id']  # match['id'] is already a UUID
                           for sid in studio['stash_ids']):
-                        logger(f"✅ Found existing parent studio: {studio['name']}", "INFO")
+                        logger(f"✅ Found existing parent studio: {studio['name']} (UUID match)", "INFO")
                         
-                        # Update studio with any missing IDs from other endpoints
+                        # Update studio with any missing UUIDs from other endpoints
                         if not dry_run:
                             existing_stash_ids = studio.get('stash_ids', []).copy()
                             updated = False
                             
                             for other_match in parent_matches:
                                 if not any(sid['endpoint'] == other_match['endpoint'] and 
-                                         sid['stash_id'] == other_match['id'] 
+                                         sid['stash_id'] == other_match['id']
                                          for sid in existing_stash_ids):
                                     existing_stash_ids.append({
-                                        'stash_id': other_match['id'],
+                                        'stash_id': other_match['id'],  # This is already a UUID
                                         'endpoint': other_match['endpoint']
                                     })
                                     updated = True
@@ -1161,28 +1201,32 @@ def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
                                         'id': studio['id'],
                                         'stash_ids': existing_stash_ids
                                     })
-                                    logger(f"📝 Updated parent studio {studio['name']} with {len(existing_stash_ids)} additional IDs", "INFO")
+                                    logger(f"📝 Updated parent studio {studio['name']} with additional UUIDs", "INFO")
                                 except Exception as e:
-                                    logger(f"Error updating parent studio IDs: {e}", "ERROR")
+                                    logger(f"Error updating parent studio UUIDs: {e}", "ERROR")
                         
                         return studio['id']
         
-        # If not found by ID, try exact name match
+        # If not found by UUID, try exact name match (only for studios without parents)
         for studio in studios:
+            # Skip if this studio has a parent
+            if studio.get('parent_studio'):
+                continue
+                
             if studio['name'].lower() == parent_name.lower():
-                logger(f"✅ Found existing parent studio: {studio['name']}", "INFO")
+                logger(f"✅ Found existing parent studio: {studio['name']} (name match)", "INFO")
                 
                 if not dry_run:
-                    # Add all matched IDs to the studio
+                    # Add all matched UUIDs to the studio
                     existing_stash_ids = studio.get('stash_ids', []).copy()
                     updated = False
                     
                     for match in parent_matches:
                         if not any(sid['endpoint'] == match['endpoint'] and 
-                                 sid['stash_id'] == match['id'] 
+                                 sid['stash_id'] == match['id']
                                  for sid in existing_stash_ids):
                             existing_stash_ids.append({
-                                'stash_id': match['id'],
+                                'stash_id': match['id'],  # This is already a UUID
                                 'endpoint': match['endpoint']
                             })
                             updated = True
@@ -1193,15 +1237,15 @@ def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
                                 'id': studio['id'],
                                 'stash_ids': existing_stash_ids
                             })
-                            logger(f"📝 Updated parent studio {studio['name']} with {len(existing_stash_ids)} additional IDs", "INFO")
+                            logger(f"📝 Updated parent studio {studio['name']} with UUIDs", "INFO")
                         except Exception as e:
-                            logger(f"Error updating parent studio IDs: {e}", "ERROR")
+                            logger(f"Error updating parent studio UUIDs: {e}", "ERROR")
                 
                 return studio['id']
         
-        # If not found, create new parent studio with all matched IDs
+        # If not found, create new parent studio with all matched UUIDs
         if dry_run:
-            logger(f"🔄 DRY RUN: Would create parent studio: {parent_name} with IDs from multiple sources", "INFO")
+            logger(f"🔄 DRY RUN: Would create parent studio: {parent_name}", "INFO")
             return "dry-run-parent-id"
         else:
             try:
@@ -1210,11 +1254,11 @@ def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
                 for match in parent_matches:
                     try:
                         if match['is_tpdb']:
-                            studio_data = find_tpdb_site(match['id'], match['api_key'])
+                            studio_data = find_tpdb_site(match['id'], match['api_key'])  # match['id'] is already a UUID
                         else:
                             response = graphql_request(
                                 STASHBOX_FIND_STUDIO_QUERY,
-                                {'id': match['id']},
+                                {'id': match['id']},  # match['id'] is already a UUID
                                 match['endpoint'],
                                 match['api_key']
                             )
@@ -1238,7 +1282,7 @@ def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
                         continue
 
                 stash_ids = [{
-                    'stash_id': match['id'],
+                    'stash_id': match['id'],  # This is already a UUID
                     'endpoint': match['endpoint']
                 } for match in parent_matches]
                 
@@ -1253,7 +1297,7 @@ def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
 
                 result = stash.create_studio(new_studio)
                 if result:
-                    logger(f"➕ Created parent studio: {parent_name} with IDs from {len(stash_ids)} sources", "INFO")
+                    logger(f"➕ Created parent studio: {parent_name}", "INFO")
                     return result['id']
             except Exception as e:
                 logger(f"Error creating parent studio: {e}", "ERROR")
