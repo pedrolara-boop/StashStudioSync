@@ -244,7 +244,13 @@ def main():
                 logger(f"🔍 Processing single studio ID: {studio_id}")
                 studio = find_local_studio(studio_id)
                 if studio:
-                    wrapped_update_studio_data(studio, dry_run, force)
+                    # Search for matches
+                    matches = search_all_stashboxes(studio['name'])
+                    if matches:
+                        # Process the studio with matches
+                        process_studio_with_matches(studio, matches, dry_run, force)
+                    else:
+                        logger(f"❌ No matches found for studio: {studio['name']}", "INFO")
                 else:
                     logger(f"❌ Studio with ID {studio_id} not found.")
             else:
@@ -406,44 +412,177 @@ def find_tpdb_site(site_uuid, api_key):
         logger(f"Error in find_tpdb_site: {str(e)}", "ERROR")
         return None
 
+def calculate_word_order_score(name1, name2):
+    """Calculate score based on word order and position with improved weighting"""
+    words1 = name1.lower().split()
+    words2 = name2.lower().split()
+    
+    score = 0
+    # Words in the same position get higher weight
+    for i, (w1, w2) in enumerate(zip(words1, words2)):
+        if w1 == w2:
+            # Words in the same position get higher weight
+            score += 40  # Increased from 30
+        elif w1 in words2 or w2 in words1:
+            # Words found in different positions get lower weight
+            score += 20  # Increased from 15
+    
+    # Additional penalty for missing words at the start
+    if len(words1) > len(words2):
+        missing_words = words1[:len(words1)-len(words2)]
+        score -= len(missing_words) * 25  # Stronger penalty for missing words at start
+    
+    return score
+
+def calculate_prefix_suffix_score(name1, name2):
+    """Calculate score based on common prefixes and suffixes with improved weighting"""
+    name1 = name1.lower()
+    name2 = name2.lower()
+    
+    score = 0
+    # Check for common prefixes with higher weight for longer matches
+    for i in range(min(len(name1), len(name2))):
+        if name1[:i] == name2[:i]:
+            score += i * 2  # Weight increases with length of match
+    
+    # Check for common suffixes with higher weight for longer matches
+    for i in range(min(len(name1), len(name2))):
+        if name1[-i:] == name2[-i:]:
+            score += i * 2  # Weight increases with length of match
+    
+    return score
+
+def analyze_word_lengths(name1, name2):
+    """Analyze word lengths and positions for better matching"""
+    words1 = name1.lower().split()
+    words2 = name2.lower().split()
+    
+    score = 0
+    # Longer words are more significant
+    for w1 in words1:
+        if len(w1) > 4:  # Only consider significant words
+            if w1 in words2:
+                score += 30
+            else:
+                score -= 20  # Penalty for missing significant words
+    
+    return score
+
 def fuzzy_match_studio_name(name, candidates, threshold=85):
-    """Enhanced fuzzy matching with clear result logging and endpoint tracking"""
+    """Enhanced matching using multiple strategies"""
     if not name or not candidates:
         return None, 0, []
     
     # Group matches by endpoint for clearer logging
     matches_by_endpoint = {}
-    best_matches = []  # Store best matches from each endpoint
+    best_matches = []
     overall_best_match = None
     overall_best_score = 0
     
     # Normalize the input name
     name_lower = name.lower()
+    name_words = set(name_lower.split())
     name_no_space = name_lower.replace(" ", "")
     
+    # Define words that should have negative weights
+    negative_words = {
+        'network': -30,  # Strong negative weight for "network"
+        'group': -25,    # Strong negative weight for "group"
+        'media': -25,    # Strong negative weight for "media"
+        'entertainment': -25,  # Strong negative weight for "entertainment"
+        'productions': -20,     # Medium negative weight for "productions"
+        'studio': -20,          # Medium negative weight for "studio"
+        'films': -20,           # Medium negative weight for "films"
+        'pictures': -20,        # Medium negative weight for "pictures"
+        'company': -15,         # Light negative weight for "company"
+        'inc': -15,             # Light negative weight for "inc"
+        'llc': -15,             # Light negative weight for "llc"
+        'ltd': -15              # Light negative weight for "ltd"
+    }
+    
+    # First pass: Check for exact matches
+    exact_matches = []
     for candidate in candidates:
         endpoint_name = candidate.get('endpoint_name', 'Unknown')
         candidate_name = candidate['name'].lower()
+        
+        # Check for exact match (case-insensitive)
+        if name_lower == candidate_name:
+            exact_matches.append({
+                'name': candidate['name'],
+                'score': 100,
+                'id': candidate['id'],
+                'original': candidate,
+                'endpoint_name': endpoint_name
+            })
+            logger(f"   {endpoint_name}: {candidate['name']} (EXACT MATCH)", "INFO")
+    
+    # If we found exact matches, return the first one (they're all equally valid)
+    if exact_matches:
+        best_exact_match = exact_matches[0]
+        logger(f"✅ Found exact match: '{best_exact_match['name']}' from {best_exact_match['endpoint_name']}", "INFO")
+        return best_exact_match['original'], 100, [best_exact_match['original']]
+    
+    # If no exact matches, proceed with fuzzy matching
+    for candidate in candidates:
+        endpoint_name = candidate.get('endpoint_name', 'Unknown')
+        candidate_name = candidate['name'].lower()
+        candidate_words = set(candidate_name.split())
         candidate_no_space = candidate_name.replace(" ", "")
         
         # Calculate multiple similarity scores
-        scores = [
-            fuzz.ratio(name_lower, candidate_name),  # Exact character match
-            fuzz.partial_ratio(name_lower, candidate_name),  # Best partial match
-            fuzz.token_sort_ratio(name_lower, candidate_name),  # Token-based match
-            fuzz.token_set_ratio(name_lower, candidate_name),  # Set-based match
-            # Special handling for space vs no-space cases
-            fuzz.ratio(name_no_space, candidate_no_space),
-            fuzz.ratio(name_no_space, candidate_name),
-            fuzz.ratio(name_lower, candidate_no_space)
+        scores = []
+        
+        # 1. Character-based fuzzy matching (30% weight)
+        fuzzy_scores = [
+            fuzz.ratio(name_lower, candidate_name),
+            fuzz.partial_ratio(name_lower, candidate_name),
+            fuzz.token_sort_ratio(name_lower, candidate_name),
+            fuzz.token_set_ratio(name_lower, candidate_name)
         ]
+        scores.append(max(fuzzy_scores) * 0.3)
         
-        # Take the highest score
-        score = max(scores)
+        # 2. Word order and position (30% weight)
+        word_order_score = calculate_word_order_score(name_lower, candidate_name)
+        scores.append(word_order_score * 0.3)
         
-        # Special case: If one string is contained within the other (after normalization)
-        if name_no_space in candidate_no_space or candidate_no_space in name_no_space:
-            score = max(score, 95)  # Boost score for contained matches
+        # 3. Prefix/Suffix matching (20% weight)
+        prefix_suffix_score = calculate_prefix_suffix_score(name_lower, candidate_name)
+        scores.append(prefix_suffix_score * 0.2)
+        
+        # 4. Word length analysis (20% weight)
+        word_length_score = analyze_word_lengths(name_lower, candidate_name)
+        scores.append(word_length_score * 0.2)
+        
+        # Calculate final score
+        score = sum(scores)
+        
+        # Apply penalties
+        if score >= 90:  # Only apply to high-scoring matches
+            # Penalize subset matches
+            if (name_words.issubset(candidate_words) or candidate_words.issubset(name_words)) and \
+               len(name_words) != len(candidate_words):
+                word_diff = abs(len(name_words) - len(candidate_words))
+                penalty = word_diff * 15
+                score = max(score - penalty, 0)
+                logger(f"   Applied word-based penalty of {penalty} points to {candidate_name} (subset match)", "DEBUG")
+            
+            # Apply negative weights for common words
+            for word, weight in negative_words.items():
+                if word in candidate_words and word not in name_words:
+                    score = max(score + weight, 0)
+                    logger(f"   Applied negative weight of {weight} points to {candidate_name} (contains '{word}')", "DEBUG")
+                elif word in name_words and word not in candidate_words:
+                    score = max(score + weight, 0)
+                    logger(f"   Applied negative weight of {weight} points to {candidate_name} (missing '{word}')", "DEBUG")
+            
+            # Additional penalty for missing significant words
+            if len(name_words) > len(candidate_words):
+                missing_words = name_words - candidate_words
+                for word in missing_words:
+                    if len(word) > 4:  # Only penalize for significant words
+                        score = max(score - 10, 0)
+                        logger(f"   Applied missing word penalty of 10 points to {candidate_name} (missing '{word}')", "DEBUG")
         
         if endpoint_name not in matches_by_endpoint:
             matches_by_endpoint[endpoint_name] = []
@@ -503,7 +642,7 @@ def search_all_stashboxes(studio_name):
                 continue
                 
             if endpoint['is_tpdb']:
-                # TPDB search logic (already working correctly)
+                # TPDB search logic
                 tpdb_results = search_tpdb_site(studio_name, endpoint['api_key'])
                 if tpdb_results:
                     for result in tpdb_results:
@@ -561,10 +700,36 @@ def search_all_stashboxes(studio_name):
     # After gathering all results, perform fuzzy matching
     if results:
         best_match, score, all_matches = fuzzy_match_studio_name(studio_name, results)
-        return all_matches if all_matches else []
+        logger(f"Found {len(results)} total matches, {len(all_matches)} passed fuzzy matching", "DEBUG")
+        
+        # Return all matches that passed fuzzy matching
+        return results  # Return all results instead of just fuzzy matches
     else:
         logger(f"❌ No matches for '{studio_name}'", "INFO")
         return []
+
+def update_stash_ids(existing_ids, new_id, endpoint):
+    """
+    Update stash IDs ensuring only one ID per endpoint is maintained.
+    
+    Args:
+        existing_ids (list): List of existing stash IDs
+        new_id (str): New stash ID to add
+        endpoint (str): Endpoint URL
+        
+    Returns:
+        list: Updated list of stash IDs
+    """
+    # Remove any existing IDs for this endpoint
+    filtered_ids = [sid for sid in existing_ids if sid['endpoint'] != endpoint]
+    
+    # Add the new ID
+    filtered_ids.append({
+        'endpoint': endpoint,
+        'stash_id': new_id
+    })
+    
+    return filtered_ids
 
 def wrapped_update_studio_data(studio, dry_run=False, force=False):
     """Update studio data with matches from all configured endpoints"""
@@ -581,8 +746,9 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
     processed_studios.add(studio_id)  # Mark this studio as processed
     
     # Initialize variables to track all changes
-    all_stash_ids = studio.get('stash_ids', []).copy()
+    all_stash_ids = studio.get('stash_ids', []).copy()  # Keep existing stash_ids
     best_image = None
+    best_image_score = 0  # Track how good the match is for the image
     best_url = studio.get('url')
     best_parent_id = studio.get('parent_id')
     has_changes = False
@@ -599,181 +765,67 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
         logger(f"❌ No matches found for: {studio_name}", "INFO")
         return False
     
-    # First pass: Process StashDB matches to get priority images
+    # Process each match independently to collect UUIDs from all endpoints
     for match in matches:
-        if not match['is_tpdb'] and match['endpoint'] == 'https://stashdb.org/graphql':
-            try:
-                response = graphql_request(STASHBOX_FIND_STUDIO_QUERY, {'id': match['id']}, match['endpoint'], match['api_key'])
-                if response and 'findStudio' in response:
-                    studio_data = response['findStudio']
-                    
-                    # Update stash ID
-                    stash_id = {
-                        'endpoint': match['endpoint'],
-                        'stash_id': studio_data['id']
-                    }
-                    
-                    # Remove existing ID for this endpoint if it exists
-                    all_stash_ids = [sid for sid in all_stash_ids if sid['endpoint'] != match['endpoint']]
-                    all_stash_ids.append(stash_id)
+        try:
+            if match.get('is_tpdb'):
+                # Process TPDB match
+                studio_data = find_tpdb_site(match['id'], match['api_key'])
+                if studio_data:
+                    # Update stash_ids using the update function
+                    all_stash_ids = update_stash_ids(all_stash_ids, studio_data['id'], match['endpoint'])
                     has_changes = True
-                    changes_summary.append("StashDB ID")
+                    changes_summary.append("ThePornDB UUID")
+                    logger(f"Added/Updated ThePornDB UUID: {studio_data['id']}", "DEBUG")
                     
+                    # Handle TPDB images - calculate match score for the logo
+                    name_similarity = fuzz.ratio(studio_name.lower(), studio_data['name'].lower())
                     if studio_data.get('images'):
-                        # Try to find logo or poster in StashDB images
-                        logo_image = next((img['url'] for img in studio_data['images'] if 'logo' in img.get('url', '').lower()), None)
-                        poster_image = next((img['url'] for img in studio_data['images'] if 'poster' in img.get('url', '').lower()), None)
-                        
-                        if logo_image:
-                            best_image = logo_image
-                            has_changes = True
-                            changes_summary.append("StashDB logo image")
-                        elif poster_image:
-                            best_image = poster_image
-                            has_changes = True
-                            changes_summary.append("StashDB poster image")
-                        elif studio_data['images']:
-                            best_image = studio_data['images'][0].get('url')
-                            has_changes = True
-                            changes_summary.append("StashDB image")
+                        for image in studio_data['images']:
+                            if image.get('url') and image['url'].startswith(('http://', 'https://')):
+                                # Only update if this is a better match
+                                if name_similarity > best_image_score:
+                                    best_image = image['url']
+                                    best_image_score = name_similarity
+                                    logger(f"Found better logo match (score: {name_similarity}) from {studio_data['name']}", "DEBUG")
+                                    if "logo" not in changes_summary:
+                                        changes_summary.append("logo")
+                                break
+            else:
+                # Process Stash-box match
+                studio_data = find_stashbox_studio(match['id'], match['endpoint'], match['api_key'])
+                if studio_data:
+                    # Update stash_ids using the update function
+                    all_stash_ids = update_stash_ids(all_stash_ids, studio_data['id'], match['endpoint'])
+                    has_changes = True
+                    changes_summary.append(f"{match['endpoint_name']} UUID")
+                    logger(f"Added/Updated {match['endpoint_name']} UUID: {studio_data['id']}", "DEBUG")
                     
-                    # Process URLs from StashDB
+                    # Handle Stash-box images - calculate match score for the logo
+                    name_similarity = fuzz.ratio(studio_name.lower(), studio_data['name'].lower())
+                    if studio_data.get('images'):
+                        for image in studio_data['images']:
+                            if image.get('url') and image['url'].startswith(('http://', 'https://')):
+                                # Only update if this is a better match
+                                if name_similarity > best_image_score:
+                                    best_image = image['url']
+                                    best_image_score = name_similarity
+                                    logger(f"Found better logo match (score: {name_similarity}) from {studio_data['name']}", "DEBUG")
+                                    if "logo" not in changes_summary:
+                                        changes_summary.append("logo")
+                                break
+                    
+                    # Handle URLs if available
                     if studio_data.get('urls'):
                         for url_data in studio_data['urls']:
-                            if url_data.get('type') == 'HOME' and url_data.get('url'):
-                                url = url_data['url']
-                                if url not in seen_urls:
-                                    if not best_url or force:
-                                        best_url = url
-                                        has_changes = True
-                                        changes_summary.append("StashDB URL")
-                                    seen_urls.add(url)
-                                    break
-                    
-                    # Process parent studio
-                    if studio_data.get('parent') and (not best_parent_id or force):
-                        parent_data = studio_data['parent']
-                        if not dry_run:
-                            try:
-                                parent_info = {
-                                    'id': parent_data.get('id'),
-                                    'name': parent_data.get('name'),
-                                    'url': None,
-                                    'image_path': None
-                                }
-                                parent_studio_id = find_or_create_parent_studio(parent_info, match['endpoint'], dry_run)
-                                if parent_studio_id:
-                                    best_parent_id = parent_studio_id
-                                    has_changes = True
-                                    changes_summary.append("Parent from StashDB")
-                                    logger(f"🔗 Linking parent studio {parent_data.get('name')} to {studio_name}", "INFO")
-                            except Exception as e:
-                                logger(f"❌ Parent studio error for {studio_name}: {str(e)}", "ERROR")
-            except Exception as e:
-                logger(f"❌ StashDB error for {studio_name}: {str(e)}", "ERROR")
-                continue
-    
-    # Second pass: Process remaining matches (ThePornDB and other stash boxes)
-    for match in matches:
-        endpoint = match['endpoint']
-        endpoint_name = match['endpoint_name']
-        
-        try:
-            # Get full studio data
-            if match['is_tpdb']:
-                studio_data = find_tpdb_site(match['id'], match['api_key'])
-            else:
-                # Use the same query for all Stash-box endpoints
-                response = graphql_request(
-                    STASHBOX_FIND_STUDIO_QUERY,
-                    {'id': match['id']},
-                    endpoint,
-                    match['api_key']
-                )
-                studio_data = response.get('findStudio') if response else None
-            
-            if not studio_data:
-                continue
-
-            # Update stash ID if not already done
-            stash_id = {
-                'endpoint': endpoint,
-                'stash_id': studio_data['id']
-            }
-            
-            # Remove existing ID for this endpoint if it exists
-            all_stash_ids = [sid for sid in all_stash_ids if sid['endpoint'] != endpoint]
-            all_stash_ids.append(stash_id)
-            has_changes = True
-            changes_summary.append(f"{endpoint_name} ID")
-            
-            # Update URL if available and not seen before
-            if studio_data.get('urls'):
-                for url_data in studio_data['urls']:
-                    if url_data.get('type') == 'HOME' and url_data.get('url'):
-                        url = url_data['url']
-                        if url not in seen_urls:
-                            if not best_url or force:
+                            url = url_data.get('url')
+                            if url and url not in seen_urls and url.startswith(('http://', 'https://')):
                                 best_url = url
-                                has_changes = True
-                                changes_summary.append(f"{endpoint_name} URL")
-                            seen_urls.add(url)
-                            break
-
-            # Update image only if we don't have one from StashDB and there are actual images
-            if studio_data.get('images') and isinstance(studio_data['images'], list) and len(studio_data['images']) > 0 and (not best_image or force):
-                # Try to find logo or poster in images
-                logo_image = next((
-                    img['url'] 
-                    for img in studio_data['images'] 
-                    if img.get('url') and isinstance(img['url'], str) 
-                    and img['url'].startswith(('http://', 'https://'))
-                    and 'logo' in img['url'].lower()
-                ), None)
-                
-                poster_image = next((
-                    img['url'] 
-                    for img in studio_data['images'] 
-                    if img.get('url') and isinstance(img['url'], str)
-                    and img['url'].startswith(('http://', 'https://'))
-                    and 'poster' in img['url'].lower()
-                ), None)
-                
-                if logo_image:
-                    best_image = logo_image
-                    has_changes = True
-                    changes_summary.append(f"{endpoint_name} logo image")
-                elif poster_image:
-                    best_image = poster_image
-                    has_changes = True
-                    changes_summary.append(f"{endpoint_name} poster image")
-                elif studio_data['images'][0].get('url') and isinstance(studio_data['images'][0]['url'], str) and studio_data['images'][0]['url'].startswith(('http://', 'https://')):
-                    best_image = studio_data['images'][0]['url']
-                    has_changes = True
-                    changes_summary.append(f"{endpoint_name} image")
-
-            # Process parent studio
-            if studio_data.get('parent') and (not best_parent_id or force):
-                parent_data = studio_data['parent']
-                if not dry_run:
-                    try:
-                        parent_info = {
-                            'id': parent_data.get('id'),
-                            'name': parent_data.get('name'),
-                            'url': None,
-                            'image_path': None
-                        }
-                        parent_studio_id = find_or_create_parent_studio(parent_info, endpoint, dry_run)
-                        if parent_studio_id:
-                            best_parent_id = parent_studio_id
-                            has_changes = True
-                            changes_summary.append(f"Parent from {endpoint_name}")
-                            logger(f"🔗 Linking parent studio {parent_data.get('name')} to {studio_name}", "INFO")
-                    except Exception as e:
-                        logger(f"❌ Parent studio error for {studio_name}: {str(e)}", "ERROR")
-
+                                seen_urls.add(url)
+                                changes_summary.append("URL")
+                                break
         except Exception as e:
-            logger(f"❌ {endpoint_name} error for {studio_name}: {str(e)}", "ERROR")
+            logger(f"❌ Error processing match from {match.get('endpoint_name', 'Unknown')}: {str(e)}", "ERROR")
             continue
 
     # Perform single update with all collected changes
@@ -797,12 +849,7 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                 # Only include image if we actually found one and it has a valid URL
                 if best_image and isinstance(best_image, str) and best_image.startswith(('http://', 'https://')):
                     studio_update['image'] = best_image
-                    logger(f"Including image URL in update: {best_image}", "DEBUG")
-                else:
-                    logger(f"No valid image URL found for {studio_name}, skipping image update", "DEBUG")
-                
-                # Log the final update data
-                logger(f"Studio update data: {studio_update}", "DEBUG")
+                    logger(f"Adding image URL: {best_image}", "DEBUG")
                 
                 # Create a concise summary of changes
                 unique_changes = list(dict.fromkeys(changes_summary))
@@ -817,12 +864,30 @@ def wrapped_update_studio_data(studio, dry_run=False, force=False):
                 logger(f"❌ Update failed for {studio_name}: {str(e)}", "ERROR")
                 return False
         else:
-            unique_changes = list(dict.fromkeys(changes_summary))  # Remove duplicates while preserving order
+            unique_changes = list(dict.fromkeys(changes_summary))
             logger(f"🔍 [DRY RUN] Would update {studio_name} with: {', '.join(unique_changes)}", "INFO")
             return True
     else:
         logger(f"ℹ️ No changes needed for {studio_name}", "DEBUG")
         return False
+
+def find_stashbox_studio(studio_id, endpoint, api_key):
+    """Fetch studio details from a Stash-box endpoint"""
+    try:
+        response = graphql_request(
+            STASHBOX_FIND_STUDIO_QUERY,
+            {'id': studio_id},
+            endpoint,
+            api_key
+        )
+        
+        if response and 'findStudio' in response:
+            studio_data = response['findStudio']
+            return studio_data
+        return None
+    except Exception as e:
+        logger(f"❌ Error fetching studio from {endpoint}: {str(e)}", "ERROR")
+        return None
 
 def parse_args():
     """Parse command line arguments"""
@@ -1139,173 +1204,54 @@ def search_parent_studio_all_endpoints(parent_name, parent_id, original_endpoint
     return matches
 
 def find_or_create_parent_studio(parent_data, original_endpoint, dry_run=False):
-    """
-    Enhanced version that searches across all endpoints and uses UUIDs consistently
-    """
-    if not parent_data:
-        return None
-    
-    parent_uuid = parent_data.get('id')  # This should be a UUID
+    """Find or create parent studio using UUID matching"""
+    parent_uuid = parent_data.get('id')
     parent_name = parent_data.get('name')
     
-    if not parent_uuid or not parent_name:
+    if not parent_uuid:
+        logger(f"❌ No parent UUID provided for: {parent_name}", "INFO")
         return None
     
-    logger(f"🔍 Searching for parent studio: {parent_name} (UUID: {parent_uuid})", "INFO")
+    # Get all studios from Stash
+    studios = config.get('stash_interface').find_studios()
     
-    try:
-        stash = config.get('stash_interface')
-        if not stash:
-            logger("No Stash interface configured", "ERROR")
-            return None
-        
-        # Get all studios
-        studios = stash.find_studios()
-        if not studios:
-            studios = []
-        
-        # Search across all endpoints
-        parent_matches = search_parent_studio_all_endpoints(parent_name, parent_uuid, original_endpoint)
-        
-        # First, try to find existing studio by UUID
-        for studio in studios:
-            # Skip if this studio has a parent (to prevent child studios from being set as parents)
-            if studio.get('parent_studio'):
-                continue
-                
-            if studio.get('stash_ids'):
-                for match in parent_matches:
-                    if any(sid['endpoint'] == match['endpoint'] and 
-                          sid['stash_id'] == match['id']  # match['id'] is already a UUID
-                          for sid in studio['stash_ids']):
-                        logger(f"✅ Found existing parent studio: {studio['name']} (UUID match)", "INFO")
-                        
-                        # Update studio with any missing UUIDs from other endpoints
-                        if not dry_run:
-                            existing_stash_ids = studio.get('stash_ids', []).copy()
-                            updated = False
-                            
-                            for other_match in parent_matches:
-                                if not any(sid['endpoint'] == other_match['endpoint'] and 
-                                         sid['stash_id'] == other_match['id']
-                                         for sid in existing_stash_ids):
-                                    existing_stash_ids.append({
-                                        'stash_id': other_match['id'],  # This is already a UUID
-                                        'endpoint': other_match['endpoint']
-                                    })
-                                    updated = True
-                            
-                            if updated:
-                                try:
-                                    stash.update_studio({
-                                        'id': studio['id'],
-                                        'stash_ids': existing_stash_ids
-                                    })
-                                    logger(f"📝 Updated parent studio {studio['name']} with additional UUIDs", "INFO")
-                                except Exception as e:
-                                    logger(f"Error updating parent studio UUIDs: {e}", "ERROR")
-                        
-                        return studio['id']
-        
-        # If not found by UUID, try exact name match (only for studios without parents)
-        for studio in studios:
-            # Skip if this studio has a parent
-            if studio.get('parent_studio'):
-                continue
-                
-            if studio['name'].lower() == parent_name.lower():
-                logger(f"✅ Found existing parent studio: {studio['name']} (name match)", "INFO")
-                
-                if not dry_run:
-                    # Add all matched UUIDs to the studio
-                    existing_stash_ids = studio.get('stash_ids', []).copy()
-                    updated = False
-                    
-                    for match in parent_matches:
-                        if not any(sid['endpoint'] == match['endpoint'] and 
-                                 sid['stash_id'] == match['id']
-                                 for sid in existing_stash_ids):
-                            existing_stash_ids.append({
-                                'stash_id': match['id'],  # This is already a UUID
-                                'endpoint': match['endpoint']
-                            })
-                            updated = True
-                    
-                    if updated:
-                        try:
-                            stash.update_studio({
-                                'id': studio['id'],
-                                'stash_ids': existing_stash_ids
-                            })
-                            logger(f"📝 Updated parent studio {studio['name']} with UUIDs", "INFO")
-                        except Exception as e:
-                            logger(f"Error updating parent studio UUIDs: {e}", "ERROR")
-                
+    # First, try to find existing studio by UUID
+    for studio in studios:
+        if studio.get('stash_ids'):
+            # Check if this studio has the parent UUID
+            if any(sid['endpoint'] == original_endpoint and 
+                  sid['stash_id'] == parent_uuid
+                  for sid in studio['stash_ids']):
+                logger(f"✅ Found existing parent studio: {studio['name']} (UUID match)", "INFO")
                 return studio['id']
-        
-        # If not found, create new parent studio with all matched UUIDs
-        if dry_run:
-            logger(f"🔄 DRY RUN: Would create parent studio: {parent_name}", "INFO")
-            return "dry-run-parent-id"
-        else:
-            try:
-                # Get full studio data from each endpoint to find images
-                best_image = None
-                for match in parent_matches:
-                    try:
-                        if match['is_tpdb']:
-                            studio_data = find_tpdb_site(match['id'], match['api_key'])  # match['id'] is already a UUID
-                        else:
-                            response = graphql_request(
-                                STASHBOX_FIND_STUDIO_QUERY,
-                                {'id': match['id']},  # match['id'] is already a UUID
-                                match['endpoint'],
-                                match['api_key']
-                            )
-                            studio_data = response.get('findStudio') if response else None
-
-                        if studio_data and studio_data.get('images'):
-                            # Try to find logo or poster
-                            logo_image = next((img['url'] for img in studio_data['images'] 
-                                            if 'logo' in img.get('url', '').lower()), None)
-                            poster_image = next((img['url'] for img in studio_data['images'] 
-                                              if 'poster' in img.get('url', '').lower()), None)
-                            
-                            if logo_image and not best_image:
-                                best_image = logo_image
-                            elif poster_image and not best_image:
-                                best_image = poster_image
-                            elif studio_data['images'] and not best_image:
-                                best_image = studio_data['images'][0].get('url')
-                    except Exception as e:
-                        logger(f"Error getting images for parent studio from {match['endpoint_name']}: {e}", "DEBUG")
-                        continue
-
-                stash_ids = [{
-                    'stash_id': match['id'],  # This is already a UUID
-                    'endpoint': match['endpoint']
-                } for match in parent_matches]
-                
-                new_studio = {
-                    'name': parent_name,
-                    'stash_ids': stash_ids
-                }
-                
-                if best_image:
-                    new_studio['image'] = best_image
-                    logger(f"📸 Adding image to parent studio {parent_name}", "INFO")
-
-                result = stash.create_studio(new_studio)
-                if result:
-                    logger(f"➕ Created parent studio: {parent_name}", "INFO")
-                    return result['id']
-            except Exception as e:
-                logger(f"Error creating parent studio: {e}", "ERROR")
-        
-        return None
-        
-    except Exception as e:
-        logger(f"Error in find_or_create_parent_studio: {e}", "ERROR")
+    
+    # If no existing studio found, create new one
+    if not dry_run:
+        try:
+            # Create the parent studio with the original UUID
+            parent_studio = {
+                'name': parent_name,
+                'url': None,
+                'stash_ids': [{
+                    'endpoint': original_endpoint,
+                    'stash_id': parent_uuid
+                }]
+            }
+            
+            # Create the studio in Stash
+            result = config.get('stash_interface').create_studio(parent_studio)
+            if result:
+                parent_studio_id = result.get('id')
+                logger(f"✅ Created new parent studio: {parent_name} with ID: {parent_studio_id}", "INFO")
+                return parent_studio_id
+            else:
+                logger(f"❌ Failed to create parent studio: {parent_name}", "ERROR")
+                return None
+        except Exception as e:
+            logger(f"❌ Error creating parent studio: {str(e)}", "ERROR")
+            return None
+    else:
+        logger(f"DRY RUN: Would create parent studio: {parent_name}", "INFO")
         return None
 
 def add_tpdb_id_to_studio(studio_id, tpdb_id, dry_run=False):
@@ -1410,7 +1356,6 @@ def update_studio(studio_data, local_id, dry_run=False):
 
 def process_studio_with_matches(studio, matches, dry_run=False, force=False):
     """Process a studio with pre-fetched matches"""
-    # Add validation at the start
     if not matches:
         logger(f"No matches provided for studio {studio['name']}", "ERROR")
         return False
@@ -1419,10 +1364,17 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
     studio_name = studio['name']
     
     logger(f"🔍 Processing studio: {studio_name} (ID: {studio_id})", "INFO")
+    logger(f"Found {len(matches)} matches to process", "DEBUG")
     
     # Initialize variables to track all changes
-    all_stash_ids = studio.get('stash_ids', []).copy()
+    all_stash_ids = studio.get('stash_ids', []).copy()  # Keep existing stash_ids
+    logger(f"Current stash_ids: {all_stash_ids}", "DEBUG")
+    
     best_image = None
+    best_image_score = 0  # Track how good the match is for the image
+    best_tpdb_match = None
+    best_tpdb_score = 0  # Track best TPDB match score
+    best_stashbox_matches = {}  # Track best match per endpoint
     best_url = studio.get('url')
     best_parent_id = studio.get('parent_id')
     has_changes = False
@@ -1432,116 +1384,106 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
     if best_url:
         seen_urls.add(best_url)
 
-    # Process all matches, including TPDB
+    # Process each match independently to collect UUIDs from all endpoints
     for match in matches:
         try:
+            logger(f"Processing match from {match.get('endpoint_name', 'Unknown')}: {match}", "DEBUG")
+            
             if match.get('is_tpdb'):
                 # Process TPDB match
+                logger(f"Processing TPDB match with ID: {match['id']}", "DEBUG")
                 studio_data = find_tpdb_site(match['id'], match['api_key'])
                 if studio_data:
-                    # Add TPDB ID
-                    stash_id = {
-                        'endpoint': match['endpoint'],
-                        'stash_id': studio_data['id']  # This is the UUID
-                    }
-                    # Remove existing TPDB ID if it exists
-                    all_stash_ids = [sid for sid in all_stash_ids if sid['endpoint'] != match['endpoint']]
-                    all_stash_ids.append(stash_id)
-                    has_changes = True
-                    changes_summary.append("ThePornDB ID")
+                    logger(f"Found TPDB studio data: {studio_data}", "DEBUG")
                     
-                    # Process images from TPDB
-                    if studio_data.get('images') and (not best_image or force):
-                        best_image = studio_data['images'][0].get('url')
-                        has_changes = True
-                        changes_summary.append("ThePornDB image")
+                    # Calculate name similarity for TPDB match
+                    name_similarity = fuzz.ratio(studio_name.lower(), studio_data['name'].lower())
+                    logger(f"TPDB match score for {studio_data['name']}: {name_similarity}", "DEBUG")
                     
-                    # Process parent studio
-                    if studio_data.get('parent') and (not best_parent_id or force):
-                        parent_data = studio_data['parent']
-                        if not dry_run:
-                            try:
-                                parent_info = {
-                                    'id': parent_data.get('id'),
-                                    'name': parent_data.get('name'),
-                                    'url': None,
-                                    'image_path': None
-                                }
-                                parent_studio_id = find_or_create_parent_studio(parent_info, match['endpoint'], dry_run)
-                                if parent_studio_id:
-                                    best_parent_id = parent_studio_id
-                                    has_changes = True
-                                    changes_summary.append("Parent from ThePornDB")
-                            except Exception as e:
-                                logger(f"❌ Parent studio error for {studio_name}: {str(e)}", "ERROR")
+                    # Only update TPDB ID if this is a better match
+                    if name_similarity > best_tpdb_score:
+                        best_tpdb_score = name_similarity
+                        best_tpdb_match = studio_data
+                        logger(f"Found better TPDB match: {studio_data['name']} (score: {name_similarity})", "DEBUG")
+                    
+                    # Handle TPDB images - calculate match score for the logo
+                    if studio_data.get('images'):
+                        for image in studio_data['images']:
+                            if image.get('url') and image['url'].startswith(('http://', 'https://')):
+                                # Only update if this is a better match
+                                if name_similarity > best_image_score:
+                                    best_image = image['url']
+                                    best_image_score = name_similarity
+                                    logger(f"Found better logo match (score: {name_similarity}) from {studio_data['name']}", "DEBUG")
+                                    if "logo" not in changes_summary:
+                                        changes_summary.append("logo")
+                                break
             else:
-                # Process StashDB match (existing code)
+                # Process Stash-box match
+                logger(f"Processing Stash-box match with ID: {match['id']}", "DEBUG")
                 studio_data = find_stashbox_studio(match['id'], match['endpoint'], match['api_key'])
                 if studio_data:
-                    # Add StashDB ID
-                    stash_id = {
-                        'endpoint': match['endpoint'],
-                        'stash_id': studio_data['id']
-                    }
-                    # Remove existing ID for this endpoint if it exists
-                    all_stash_ids = [sid for sid in all_stash_ids if sid['endpoint'] != match['endpoint']]
-                    all_stash_ids.append(stash_id)
-                    has_changes = True
-                    changes_summary.append(f"{match['endpoint_name']} ID")
+                    logger(f"Found Stash-box studio data: {studio_data}", "DEBUG")
                     
-                    # Process images from StashDB
+                    # Calculate name similarity for Stash-box match
+                    name_similarity = fuzz.ratio(studio_name.lower(), studio_data['name'].lower())
+                    logger(f"Stash-box match score for {studio_data['name']}: {name_similarity}", "DEBUG")
+                    
+                    # Track best match per endpoint
+                    endpoint = match['endpoint']
+                    if endpoint not in best_stashbox_matches or name_similarity > best_stashbox_matches[endpoint]['score']:
+                        best_stashbox_matches[endpoint] = {
+                            'data': studio_data,
+                            'score': name_similarity,
+                            'endpoint_name': match['endpoint_name']
+                        }
+                        logger(f"Found better {match['endpoint_name']} match: {studio_data['name']} (score: {name_similarity})", "DEBUG")
+                    
+                    # Handle Stash-box images - calculate match score for the logo
                     if studio_data.get('images'):
-                        logo_image = next((img['url'] for img in studio_data['images'] if 'logo' in img.get('url', '').lower()), None)
-                        poster_image = next((img['url'] for img in studio_data['images'] if 'poster' in img.get('url', '').lower()), None)
-                        
-                        if logo_image and (not best_image or force):
-                            best_image = logo_image
-                            has_changes = True
-                            changes_summary.append(f"{match['endpoint_name']} logo image")
-                        elif poster_image and (not best_image or force):
-                            best_image = poster_image
-                            has_changes = True
-                            changes_summary.append(f"{match['endpoint_name']} poster image")
-                        elif studio_data['images'] and (not best_image or force):
-                            best_image = studio_data['images'][0].get('url')
-                            has_changes = True
-                            changes_summary.append(f"{match['endpoint_name']} image")
+                        for image in studio_data['images']:
+                            if image.get('url') and image['url'].startswith(('http://', 'https://')):
+                                # Only update if this is a better match
+                                if name_similarity > best_image_score:
+                                    best_image = image['url']
+                                    best_image_score = name_similarity
+                                    logger(f"Found better logo match (score: {name_similarity}) from {studio_data['name']}", "DEBUG")
+                                    if "logo" not in changes_summary:
+                                        changes_summary.append("logo")
+                                break
                     
-                    # Process URLs
+                    # Handle URLs if available
                     if studio_data.get('urls'):
                         for url_data in studio_data['urls']:
-                            if url_data.get('type') == 'HOME' and url_data.get('url'):
-                                url = url_data['url']
-                                if url not in seen_urls:
-                                    if not best_url or force:
-                                        best_url = url
-                                        has_changes = True
-                                        changes_summary.append(f"{match['endpoint_name']} URL")
-                                    seen_urls.add(url)
-                                    break
-                    
-                    # Process parent studio
-                    if studio_data.get('parent') and (not best_parent_id or force):
-                        parent_data = studio_data['parent']
-                        if not dry_run:
-                            try:
-                                parent_info = {
-                                    'id': parent_data.get('id'),
-                                    'name': parent_data.get('name'),
-                                    'url': None,
-                                    'image_path': None
-                                }
-                                parent_studio_id = find_or_create_parent_studio(parent_info, match['endpoint'], dry_run)
-                                if parent_studio_id:
-                                    best_parent_id = parent_studio_id
-                                    has_changes = True
-                                    changes_summary.append(f"Parent from {match['endpoint_name']}")
-                            except Exception as e:
-                                logger(f"❌ Parent studio error for {studio_name}: {str(e)}", "ERROR")
+                            url = url_data.get('url')
+                            if url and url not in seen_urls and url.startswith(('http://', 'https://')):
+                                best_url = url
+                                seen_urls.add(url)
+                                changes_summary.append("URL")
+                                break
         except Exception as e:
             logger(f"❌ Error processing match from {match.get('endpoint_name', 'Unknown')}: {str(e)}", "ERROR")
             continue
 
+    # After processing all matches, update the IDs with the best matches
+    
+    # Update TPDB ID if we found a good match
+    if best_tpdb_match:
+        all_stash_ids = update_stash_ids(all_stash_ids, best_tpdb_match['id'], 'https://theporndb.net/graphql')
+        has_changes = True
+        changes_summary.append("ThePornDB UUID")
+        logger(f"Added/Updated ThePornDB UUID: {best_tpdb_match['id']} from best match: {best_tpdb_match['name']} (score: {best_tpdb_score})", "DEBUG")
+
+    # Update Stash-box IDs for each endpoint's best match
+    for endpoint, match_data in best_stashbox_matches.items():
+        studio_data = match_data['data']
+        all_stash_ids = update_stash_ids(all_stash_ids, studio_data['id'], endpoint)
+        has_changes = True
+        changes_summary.append(f"{match_data['endpoint_name']} UUID")
+        logger(f"Added/Updated {match_data['endpoint_name']} UUID: {studio_data['id']} from best match: {studio_data['name']} (score: {match_data['score']})", "DEBUG")
+
+    logger(f"Final stash_ids after processing: {all_stash_ids}", "DEBUG")
+    
     # Perform single update with all collected changes
     if has_changes:
         if not dry_run:
@@ -1563,6 +1505,7 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
                 # Only include image if we actually found one and it has a valid URL
                 if best_image and isinstance(best_image, str) and best_image.startswith(('http://', 'https://')):
                     studio_update['image'] = best_image
+                    logger(f"Adding image URL: {best_image}", "DEBUG")
                 
                 # Create a concise summary of changes
                 unique_changes = list(dict.fromkeys(changes_summary))
@@ -1587,24 +1530,6 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
     else:
         logger(f"ℹ️ No changes needed for {studio_name}", "DEBUG")
         return False
-
-def find_stashbox_studio(studio_id, endpoint, api_key):
-    """Fetch studio details from a Stash-box endpoint"""
-    try:
-        response = graphql_request(
-            STASHBOX_FIND_STUDIO_QUERY,
-            {'id': studio_id},
-            endpoint,
-            api_key
-        )
-        
-        if response and 'findStudio' in response:
-            studio_data = response['findStudio']
-            return studio_data
-        return None
-    except Exception as e:
-        logger(f"❌ Error fetching studio from {endpoint}: {str(e)}", "ERROR")
-        return None
 
 if __name__ == "__main__":
     main() 
