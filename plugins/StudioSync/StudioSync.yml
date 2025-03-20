@@ -6,6 +6,23 @@ exec:
   - python
   - "{pluginDir}/StudioSync.py"
 interface: raw
+settings:
+  preferTPDBLogos:
+    displayName: Prefer ThePornDB Logos
+    description: When both ThePornDB and StashDB have logos available, prefer ThePornDB's logos
+    type: BOOLEAN
+  preferTPDBDescriptions:
+    displayName: Prefer ThePornDB Descriptions
+    description: When both ThePornDB and StashDB have descriptions available, prefer ThePornDB's descriptions
+    type: BOOLEAN
+  preferTPDBParent:
+    displayName: Prefer ThePornDB Parent
+    description: When both ThePornDB and StashDB have parent information available, prefer ThePornDB's parent
+    type: BOOLEAN
+  preferTPDBURLs:
+    displayName: Prefer ThePornDB URLs
+    description: When both ThePornDB and StashDB have URLs available, prefer ThePornDB's URLs
+    type: BOOLEAN
 tasks:
   - name: "Match Studios"
     description: "Match and update studios with metadata from all configured Stash-box endpoints. Automatically creates and links parent studios, updates URLs and images."
