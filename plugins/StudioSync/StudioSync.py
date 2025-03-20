@@ -8,6 +8,12 @@ and parent relationships.
 
 GitHub: https://github.com/pedrolara-boop/StudioSync
 License: MIT
+
+TODO:
+- Add support for tdpb details
+- Add selection to preference of parent studio by endpoint
+- Fix duplicate studios
+- Reduce logging 
 """
 
 import json
@@ -1675,155 +1681,94 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
     best_tpdb_score = 0
     best_stashbox_matches = {}
     best_url = studio.get('url')
+    best_url_score = 0
     best_parent_id = None
     has_changes = False
+    seen_urls = set()
     changes_summary = []
     
     if best_url:
-        seen_urls = {best_url}
-    else:
-        seen_urls = set()
+        seen_urls.add(best_url)
 
-    # First, get exact matches
+    # First, get exact matches only
     exact_matches = [m for m in matches if m['name'].lower() == studio_name.lower()]
     if not exact_matches:
         logger(f"No exact matches found for {studio_name}", "DEBUG")
         return False
 
-    # Get URLs for exact matches first
-    endpoint_urls = {}
+    # Log the preference settings
+    prefer_tpdb = config.get('preferTPDBLogos', True)
+    prefer_tpdb_urls = config.get('preferTPDBURLs', True)
+    logger(f"🔧 Image preference setting - Prefer TPDB logos: {prefer_tpdb}", "INFO")
+    logger(f"🔧 URL preference setting - Prefer TPDB URLs: {prefer_tpdb_urls}", "INFO")
+
+    # Process only exact matches for logo selection
     for match in exact_matches:
         try:
             if match.get('is_tpdb'):
                 studio_data = find_tpdb_site(match['id'], match['api_key'])
-                if studio_data and studio_data.get('url'):
-                    endpoint_urls[match['endpoint']] = studio_data['url']
-            else:
-                studio_data = find_stashbox_studio(match['id'], match['endpoint'], match['api_key'])
-                if studio_data and studio_data.get('urls'):
-                    # Get the best URL from the studio data
-                    best_url_for_endpoint = None
-                    best_url_similarity = 0
-                    
-                    for url_data in studio_data['urls']:
-                        url = url_data.get('url')
-                        if url and url.startswith(('http://', 'https://')):
-                            if best_url:
-                                url_similarity = calculate_url_similarity(best_url, url)
-                                if url_similarity > best_url_similarity:
-                                    best_url_similarity = url_similarity
-                                    best_url_for_endpoint = url
-                            else:
-                                best_url_for_endpoint = url
-                                best_url_similarity = 100
-                    
-                    if best_url_for_endpoint:
-                        endpoint_urls[match['endpoint']] = best_url_for_endpoint
-                        logger(f"Selected best URL for {match.get('endpoint_name', 'Unknown')}: {best_url_for_endpoint}", "DEBUG")
-        except Exception as e:
-            logger(f"Error fetching URLs for {match.get('endpoint_name', 'Unknown')}: {str(e)}", "ERROR")
-            continue
-
-    # If we have URLs from multiple endpoints, compare them
-    if len(endpoint_urls) > 1:
-        logger(f"Found URLs from {len(endpoint_urls)} endpoints: {endpoint_urls}", "DEBUG")
-        
-        # Find endpoints with matching URLs
-        url_match_groups = []
-        processed_endpoints = set()
-        
-        for endpoint1, url1 in endpoint_urls.items():
-            if endpoint1 in processed_endpoints:
-                continue
-                
-            current_group = [endpoint1]
-            processed_endpoints.add(endpoint1)
-            
-            for endpoint2, url2 in endpoint_urls.items():
-                if endpoint2 in processed_endpoints:
-                    continue
-                    
-                url_similarity = calculate_url_similarity(url1, url2)
-                if url_similarity >= 90:  # High threshold for URL similarity
-                    current_group.append(endpoint2)
-                    processed_endpoints.add(endpoint2)
-            
-            if len(current_group) > 1:  # Only add groups with multiple endpoints
-                url_match_groups.append(current_group)
-                logger(f"Found URL match group: {current_group}", "DEBUG")
-        
-        # Use URL match groups to select matches
-        if url_match_groups:
-            # Only keep matches from endpoints with matching URLs
-            matches = [m for m in exact_matches if m['endpoint'] in url_match_groups[0]]
-            logger(f"Using matches from URL match groups: {[m['name'] for m in matches]}", "DEBUG")
-            
-            # Log the UUIDs of the matches being used
-            for match in matches:
-                if match.get('is_tpdb'):
-                    logger(f"URL-matched TPDB UUID: {match['id']}", "DEBUG")
-                else:
-                    logger(f"URL-matched StashDB UUID: {match['id']}", "DEBUG")
-        else:
-            # If no URL match groups, only use exact matches
-            matches = exact_matches
-            logger("No URL match groups found, using exact matches only", "DEBUG")
-    else:
-        # If we only have one URL, use exact matches
-        matches = exact_matches
-        logger("Only one URL found, using exact matches", "DEBUG")
-
-    # Log the preference setting
-    prefer_tpdb = config.get('preferTPDBLogos', True)  # Default to True to match initial settings
-    logger(f"🔧 Image preference setting - Prefer TPDB logos: {prefer_tpdb}", "INFO")
-
-    # Process each match to collect UUIDs and other data
-    for match in matches:
-        try:
-            if match.get('is_tpdb'):
-                studio_data = find_tpdb_site(match['id'], match['api_key'])
                 if studio_data:
                     name_similarity = fuzz.ratio(studio_name.lower(), studio_data['name'].lower())
-                    if name_similarity > best_tpdb_score:
+                    if name_similarity == 100:  # Only consider exact name matches
                         best_tpdb_score = name_similarity
                         best_tpdb_match = studio_data
-                        logger(f"Found better TPDB match: {studio_data['name']} (score: {name_similarity})", "DEBUG")
+                        logger(f"Found exact TPDB match: {studio_data['name']}", "DEBUG")
+                        
+                        # Handle URL selection for TPDB
+                        if studio_data.get('url') and prefer_tpdb_urls:
+                            url = studio_data['url']
+                            if url.startswith(('http://', 'https://')):
+                                best_url = url
+                                best_url_score = name_similarity
+                                logger(f"✅ Selected TPDB URL (preferTPDBURLs={prefer_tpdb_urls}): {url}", "INFO")
+                                if "URL" not in changes_summary:
+                                    changes_summary.append("URL")
                     
-                    # Only consider TPDB images if this is a URL-matched endpoint
-                    if url_match_groups and match['endpoint'] in url_match_groups[0]:
-                        if studio_data.get('images'):
-                            for image in studio_data['images']:
-                                if image.get('url') and image['url'].startswith(('http://', 'https://')):
-                                    if prefer_tpdb:  # If we prefer TPDB logos
-                                        best_image = image['url']
-                                        best_image_score = name_similarity
-                                        logger(f"✅ Selected TPDB logo (preferTPDBLogos={prefer_tpdb}): {image['url']}", "INFO")
-                                        if "logo" not in changes_summary:
-                                            changes_summary.append("logo")
-                                        break  # Only break if we actually selected the image
+                    # Handle image selection for TPDB - only for exact name matches
+                    if name_similarity == 100 and studio_data.get('images'):
+                        for image in studio_data['images']:
+                            if image.get('url') and image['url'].startswith(('http://', 'https://')):
+                                if prefer_tpdb:  # If we prefer TPDB logos
+                                    best_image = image['url']
+                                    best_image_score = name_similarity
+                                    logger(f"✅ Selected TPDB logo (preferTPDBLogos={prefer_tpdb}): {image['url']}", "INFO")
+                                    if "logo" not in changes_summary:
+                                        changes_summary.append("logo")
+                                    break
             else:
                 studio_data = find_stashbox_studio(match['id'], match['endpoint'], match['api_key'])
                 if studio_data:
                     name_similarity = fuzz.ratio(studio_name.lower(), studio_data['name'].lower())
-                    if name_similarity == 100:
+                    if name_similarity == 100:  # Only consider exact name matches
                         best_stashbox_matches[match['endpoint']] = {
                             'data': studio_data,
                             'score': name_similarity,
                             'endpoint_name': match['endpoint_name']
                         }
                         logger(f"Found exact match for {match['endpoint_name']}: {studio_data['name']}", "DEBUG")
+                        
+                        # Handle URL selection for StashDB
+                        if studio_data.get('urls') and not prefer_tpdb_urls:
+                            for url_data in studio_data['urls']:
+                                url = url_data.get('url')
+                                if url and url.startswith(('http://', 'https://')):
+                                    best_url = url
+                                    best_url_score = name_similarity
+                                    logger(f"✅ Selected StashDB URL (preferTPDBURLs={prefer_tpdb_urls}): {url}", "INFO")
+                                    if "URL" not in changes_summary:
+                                        changes_summary.append("URL")
+                                    break
                     
-                    # Only consider StashDB images if this is a URL-matched endpoint and we don't prefer TPDB
-                    if url_match_groups and match['endpoint'] in url_match_groups[0]:
-                        if studio_data.get('images') and not prefer_tpdb:  # Only if we don't prefer TPDB
-                            for image in studio_data['images']:
-                                if image.get('url') and image['url'].startswith(('http://', 'https://')):
-                                    best_image = image['url']
-                                    best_image_score = name_similarity
-                                    logger(f"✅ Selected StashDB logo (preferTPDBLogos={prefer_tpdb}): {image['url']}", "INFO")
-                                    if "logo" not in changes_summary:
-                                        changes_summary.append("logo")
-                                    break  # Only break if we actually selected the image
+                    # Handle image selection for StashDB - only for exact name matches
+                    if name_similarity == 100 and studio_data.get('images') and not prefer_tpdb:
+                        for image in studio_data['images']:
+                            if image.get('url') and image['url'].startswith(('http://', 'https://')):
+                                best_image = image['url']
+                                best_image_score = name_similarity
+                                logger(f"✅ Selected StashDB logo (preferTPDBLogos={prefer_tpdb}): {image['url']}", "INFO")
+                                if "logo" not in changes_summary:
+                                    changes_summary.append("logo")
+                                break
         except Exception as e:
             logger(f"Error processing match from {match.get('endpoint_name', 'Unknown')}: {str(e)}", "ERROR")
             continue
