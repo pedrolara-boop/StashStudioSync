@@ -10,6 +10,7 @@ GitHub: https://github.com/pedrolara-boop/StudioSync
 License: MIT
 
 TODO:
+- Check for parent studio not linked to studio 422
 - Add support for tdpb details
 - Add selection to preference of parent studio by endpoint
 - Fix duplicate studios
@@ -1681,8 +1682,6 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
     best_tpdb_score = 0
     best_stashbox_matches = {}
     best_url = studio.get('url')
-    best_url_score = 0
-    best_parent_id = None
     has_changes = False
     seen_urls = set()
     changes_summary = []
@@ -1699,8 +1698,14 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
     # Log the preference settings
     prefer_tpdb = config.get('preferTPDBLogos', True)
     prefer_tpdb_urls = config.get('preferTPDBURLs', True)
+    prefer_tpdb_parent = config.get('preferTPDBParent', True)
     logger(f"🔧 Image preference setting - Prefer TPDB logos: {prefer_tpdb}", "INFO")
     logger(f"🔧 URL preference setting - Prefer TPDB URLs: {prefer_tpdb_urls}", "INFO")
+    logger(f"🔧 Parent preference setting - Prefer TPDB parent: {prefer_tpdb_parent}", "INFO")
+
+    # Track parent studio information from both sources
+    tpdb_parent = None
+    stashdb_parent = None
 
     # Process only exact matches for logo selection
     for match in exact_matches:
@@ -1714,13 +1719,20 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
                         best_tpdb_match = studio_data
                         logger(f"Found exact TPDB match: {studio_data['name']}", "DEBUG")
                         
+                        # Store TPDB parent information
+                        if studio_data.get('parent'):
+                            tpdb_parent = {
+                                'data': studio_data['parent'],
+                                'endpoint': match['endpoint']
+                            }
+                            logger(f"Found TPDB parent studio: {studio_data['parent']['name']}", "DEBUG")
+                        
                         # Handle URL selection for TPDB
-                        if studio_data.get('url') and prefer_tpdb_urls:
+                        if studio_data.get('url'):
                             url = studio_data['url']
                             if url.startswith(('http://', 'https://')):
                                 best_url = url
-                                best_url_score = name_similarity
-                                logger(f"✅ Selected TPDB URL (preferTPDBURLs={prefer_tpdb_urls}): {url}", "INFO")
+                                logger(f"✅ Selected TPDB URL: {url}", "INFO")
                                 if "URL" not in changes_summary:
                                     changes_summary.append("URL")
                     
@@ -1728,13 +1740,12 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
                     if name_similarity == 100 and studio_data.get('images'):
                         for image in studio_data['images']:
                             if image.get('url') and image['url'].startswith(('http://', 'https://')):
-                                if prefer_tpdb:  # If we prefer TPDB logos
-                                    best_image = image['url']
-                                    best_image_score = name_similarity
-                                    logger(f"✅ Selected TPDB logo (preferTPDBLogos={prefer_tpdb}): {image['url']}", "INFO")
-                                    if "logo" not in changes_summary:
-                                        changes_summary.append("logo")
-                                    break
+                                best_image = image['url']
+                                best_image_score = name_similarity
+                                logger(f"✅ Selected TPDB logo: {image['url']}", "INFO")
+                                if "logo" not in changes_summary:
+                                    changes_summary.append("logo")
+                                break
             else:
                 studio_data = find_stashbox_studio(match['id'], match['endpoint'], match['api_key'])
                 if studio_data:
@@ -1747,31 +1758,111 @@ def process_studio_with_matches(studio, matches, dry_run=False, force=False):
                         }
                         logger(f"Found exact match for {match['endpoint_name']}: {studio_data['name']}", "DEBUG")
                         
+                        # Store StashDB parent information
+                        if studio_data.get('parent'):
+                            stashdb_parent = {
+                                'data': studio_data['parent'],
+                                'endpoint': match['endpoint']
+                            }
+                            logger(f"Found StashDB parent studio: {studio_data['parent']['name']}", "DEBUG")
+                        
                         # Handle URL selection for StashDB
-                        if studio_data.get('urls') and not prefer_tpdb_urls:
+                        if studio_data.get('urls'):
                             for url_data in studio_data['urls']:
                                 url = url_data.get('url')
                                 if url and url.startswith(('http://', 'https://')):
                                     best_url = url
-                                    best_url_score = name_similarity
-                                    logger(f"✅ Selected StashDB URL (preferTPDBURLs={prefer_tpdb_urls}): {url}", "INFO")
+                                    logger(f"✅ Selected StashDB URL: {url}", "INFO")
                                     if "URL" not in changes_summary:
                                         changes_summary.append("URL")
                                     break
                     
                     # Handle image selection for StashDB - only for exact name matches
-                    if name_similarity == 100 and studio_data.get('images') and not prefer_tpdb:
+                    if name_similarity == 100 and studio_data.get('images'):
                         for image in studio_data['images']:
                             if image.get('url') and image['url'].startswith(('http://', 'https://')):
                                 best_image = image['url']
                                 best_image_score = name_similarity
-                                logger(f"✅ Selected StashDB logo (preferTPDBLogos={prefer_tpdb}): {image['url']}", "INFO")
+                                logger(f"✅ Selected StashDB logo: {image['url']}", "INFO")
                                 if "logo" not in changes_summary:
                                     changes_summary.append("logo")
                                 break
         except Exception as e:
             logger(f"Error processing match from {match.get('endpoint_name', 'Unknown')}: {str(e)}", "ERROR")
             continue
+
+    # Handle parent studio selection after collecting all matches
+    if tpdb_parent and stashdb_parent:
+        # If we have parent info from both sources, use preference to decide
+        if prefer_tpdb_parent:
+            logger(f"Using TPDB parent studio (preference setting)", "INFO")
+            parent_data = tpdb_parent['data']
+            parent_endpoint = tpdb_parent['endpoint']
+        else:
+            logger(f"Using StashDB parent studio (preference setting)", "INFO")
+            parent_data = stashdb_parent['data']
+            parent_endpoint = stashdb_parent['endpoint']
+        
+        # Find or create the parent studio
+        parent_id = find_or_create_parent_studio(parent_data, parent_endpoint, dry_run)
+        if parent_id:
+            best_parent_id = parent_id
+            logger(f"✅ Linked to parent studio: {parent_data['name']}", "INFO")
+            if "parent" not in changes_summary:
+                changes_summary.append("parent")
+    elif tpdb_parent:
+        # Only TPDB has parent info
+        parent_data = tpdb_parent['data']
+        parent_endpoint = tpdb_parent['endpoint']
+        parent_id = find_or_create_parent_studio(parent_data, parent_endpoint, dry_run)
+        if parent_id:
+            best_parent_id = parent_id
+            logger(f"✅ Linked to TPDB parent studio: {parent_data['name']}", "INFO")
+            if "parent" not in changes_summary:
+                changes_summary.append("parent")
+    elif stashdb_parent:
+        # Only StashDB has parent info
+        parent_data = stashdb_parent['data']
+        parent_endpoint = stashdb_parent['endpoint']
+        parent_id = find_or_create_parent_studio(parent_data, parent_endpoint, dry_run)
+        if parent_id:
+            best_parent_id = parent_id
+            logger(f"✅ Linked to StashDB parent studio: {parent_data['name']}", "INFO")
+            if "parent" not in changes_summary:
+                changes_summary.append("parent")
+
+    # After processing all matches, apply preferences as tiebreakers if needed
+    if best_tpdb_match and best_stashbox_matches:
+        # If we have both TPDB and StashDB matches, use preferences as tiebreakers
+        for endpoint, match_data in best_stashbox_matches.items():
+            studio_data = match_data['data']
+            
+            # Handle URL tiebreaker
+            if studio_data.get('urls') and best_tpdb_match.get('url'):
+                if prefer_tpdb_urls:
+                    # Keep TPDB URL
+                    logger(f"Using TPDB URL (preference tiebreaker)", "INFO")
+                else:
+                    # Use StashDB URL
+                    for url_data in studio_data['urls']:
+                        url = url_data.get('url')
+                        if url and url.startswith(('http://', 'https://')):
+                            best_url = url
+                            logger(f"Using StashDB URL (preference tiebreaker)", "INFO")
+                            break
+            
+            # Handle image tiebreaker
+            if studio_data.get('images') and best_tpdb_match.get('images'):
+                if prefer_tpdb:
+                    # Keep TPDB image
+                    logger(f"Using TPDB logo (preference tiebreaker)", "INFO")
+                else:
+                    # Use StashDB image
+                    for image in studio_data['images']:
+                        if image.get('url') and image['url'].startswith(('http://', 'https://')):
+                            best_image = image['url']
+                            logger(f"Using StashDB logo (preference tiebreaker)", "INFO")
+                            break
 
     # Update the IDs with the best matches
     if best_tpdb_match:
